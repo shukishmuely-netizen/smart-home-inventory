@@ -1,14 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY!,
-});
-
 export async function POST(request: NextRequest) {
   try {
     const { text }: { text: string } = await request.json();
-    if (!text) return NextResponse.json({ error: 'No text provided' }, { status: 400 });
+    
+    // בדיקה אם המפתח בכלל קיים במערכת
+    if (!process.env.OPENAI_API_KEY) {
+      console.error("Missing OpenAI API Key in Environment Variables");
+      return NextResponse.json({ error: 'API Key missing' }, { status: 500 });
+    }
+
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
 
     const prompt = `Parse this Hebrew text into JSON. Format: {"action": "add"|"remove", "items": [{"name": string, "quantity": number}]}. Text: "${text}"`;
 
@@ -21,7 +26,10 @@ export async function POST(request: NextRequest) {
     const content = response.choices[0].message.content || '{}';
     const cleanedJson = content.replace(/```json|```/g, '').trim();
     return NextResponse.json(JSON.parse(cleanedJson));
-  } catch (error) {
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+
+  } catch (error: any) {
+    // השורה הזו היא הקריטית - היא תדפיס לנו את השגיאה האמיתית בלוגים של Vercel
+    console.error("OPENAI_ERROR_DETAILS:", error.message || error);
+    return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
   }
 }
