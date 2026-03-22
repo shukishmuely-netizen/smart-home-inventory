@@ -1,5 +1,4 @@
 'use client';
-
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 
@@ -22,12 +21,15 @@ export default function HomePage() {
 
   useEffect(() => {
     fetchInventory();
-    const channel = supabase
-      .channel('db_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_items' }, fetchInventory)
-      .subscribe();
+    const channel = supabase.channel('db_changes').on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_items' }, fetchInventory).subscribe();
     return () => { supabase.removeChannel(channel); };
   }, []);
+
+  const updateQuantity = async (id: string, currentQty: number, change: number) => {
+    const newQty = Math.max(0, currentQty + change);
+    await supabase.from('inventory_items').update({ quantity: newQty }).eq('id', id);
+    fetchInventory();
+  };
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,73 +42,61 @@ export default function HomePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: input }) 
       });
-      
       const parsed = await res.json();
 
-      if (!parsed.items) throw new Error('Invalid response');
-
       for (const item of parsed.items) {
-        const { data: existingItem } = await supabase
-          .from('inventory_items')
-          .select('*')
-          .eq('item_name', item.name)
-          .maybeSingle();
+        const { data: existingItem } = await supabase.from('inventory_items').select('*').eq('item_name', item.name).maybeSingle();
         
+        const change = parsed.action === 'add' ? item.quantity : -item.quantity;
         if (existingItem) {
-          const change = parsed.action === 'add' ? item.quantity : -item.quantity;
-          const newQty = Math.max(0, existingItem.quantity + change);
-          await supabase.from('inventory_items').update({ quantity: newQty }).eq('id', existingItem.id);
+          await updateQuantity(existingItem.id, existingItem.quantity, change);
         } else if (parsed.action === 'add') {
           await supabase.from('inventory_items').insert([{ 
             item_name: item.name, 
-            quantity: item.quantity, 
+            quantity: Math.max(0, item.quantity), 
             household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72' 
           }]);
         }
       }
-      setStatus('עודכן בהצלחה!');
+      setStatus('עודכן!');
       setInput('');
       fetchInventory();
-    } catch (error) { 
-      console.error(error);
-      setStatus('שגיאה בעדכון'); 
-    }
+    } catch (error) { setStatus('שגיאה'); }
   };
 
   return (
-    <main className="min-h-screen bg-slate-100 p-4 font-sans" dir="rtl">
+    <main className="min-h-screen bg-slate-50 p-4 font-sans" dir="rtl">
       <div className="max-w-xl mx-auto">
-        <h1 className="text-3xl font-extrabold mb-6 text-center text-blue-700">המלאי החכם שלי</h1>
+        <h1 className="text-3xl font-black mb-6 text-center text-indigo-700">המלאי החכם</h1>
         
-        <form onSubmit={onSubmit} className="mb-8 bg-white p-6 rounded-2xl shadow-md border border-slate-200">
-          <label className="block text-slate-700 mb-2 font-medium">מה להוסיף או להוריד?</label>
+        <form onSubmit={onSubmit} className="mb-8 bg-white p-6 rounded-3xl shadow-xl border border-indigo-100">
           <input 
             value={input} 
             onChange={(e) => setInput(e.target.value)} 
-            placeholder='לדוגמה: "קנינו 3 מלפפוץ"' 
-            className="w-full rounded-xl border border-slate-300 p-4 text-lg focus:ring-2 focus:ring-blue-500 focus:outline-none" 
+            placeholder='לדוגמה: "נשאר חצי תירס"' 
+            className="w-full rounded-2xl border border-slate-200 p-4 text-lg focus:ring-4 focus:ring-indigo-100 focus:outline-none transition-all" 
           />
-          <button type="submit" className="mt-4 w-full bg-blue-600 text-white p-4 rounded-xl font-bold text-xl hover:bg-blue-700 transition-colors shadow-lg">
+          <button type="submit" className="mt-4 w-full bg-indigo-600 text-white p-4 rounded-2xl font-bold text-xl hover:bg-indigo-700 shadow-lg active:scale-95 transition-all">
             עדכן עם AI
           </button>
         </form>
 
-        <div className="flex justify-between items-center mb-4 px-2">
-          <h2 className="text-xl font-bold text-slate-800">רשימת מלאי במטבח</h2>
-          <span className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">{status}</span>
-        </div>
-
         <div className="space-y-3">
-          {sortedItems.length === 0 ? (
-            <div className="bg-white p-8 text-center rounded-2xl border-2 border-dashed border-slate-200 text-slate-400">המלאי ריק 🍎</div>
-          ) : (
-            sortedItems.map(item => (
-              <div key={item.id} className="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-                <span className="font-bold text-lg text-slate-700">{item.item_name}</span>
-                <span className="bg-blue-100 text-blue-800 px-4 py-1 rounded-full font-bold text-lg">{item.quantity}</span>
+          {sortedItems.map(item => (
+            <div key={item.id} className="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+              <span className="font-bold text-lg text-slate-700">{item.item_name}</span>
+              
+              <div className="flex items-center gap-3">
+                <button onClick={() => updateQuantity(item.id, item.quantity, -0.5)} className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-600 hover:bg-red-50 hover:text-red-600 transition-colors">-</button>
+                
+                <span className="min-w-[50px] text-center bg-indigo-50 text-indigo-700 px-3 py-1 rounded-xl font-black text-lg">
+                  {item.quantity}
+                </span>
+
+                <button onClick={() => updateQuantity(item.id, item.quantity, 0.5)} className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-600 hover:bg-green-50 hover:text-green-600 transition-colors">+</button>
               </div>
-            ))
-          )}
+            </div>
+          ))}
         </div>
       </div>
     </main>

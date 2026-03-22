@@ -8,6 +8,10 @@ export async function POST(request: NextRequest) {
 
     const prompt = `Convert Hebrew text into a JSON object.
     Dictionary: "מלפפוץ" = "מלפפון חמוץ".
+    Special Rules: 
+    - If user says "חצי", use 0.5.
+    - If user says "רבע", use 0.25.
+    - If user says "נשאר חצי", action is "add" but the quantity change should reflect the reduction.
     Rules: Return ONLY JSON. Normalize names to singular. Sum quantities.
     Format: {"action": "add"|"remove", "items": [{"name": string, "quantity": number}]}`;
 
@@ -21,7 +25,6 @@ export async function POST(request: NextRequest) {
     const content = response.choices[0].message.content || '{}';
     return NextResponse.json(JSON.parse(content));
   } catch (error: any) {
-    console.error("Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
