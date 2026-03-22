@@ -4,20 +4,11 @@ import OpenAI from 'openai';
 export async function POST(request: NextRequest) {
   try {
     const { text }: { text: string } = await request.json();
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
-    const prompt = `You are a smart home inventory assistant. 
-    Convert Hebrew text into a JSON object.
-    
-    SPECIAL DICTIONARY:
-    - "מלפפוץ" or "מלפפוצים" = "מלפפון חמוץ"
-    
-    RULES:
-    1. Return ONLY JSON.
-    2. Normalize names to singular (e.g., "מלפפונים" -> "מלפפון").
-    3. If the same item is mentioned multiple times with different quantities, SUM them into one total.
-    4. Fix typos based on context.
-    
+    const prompt = `Convert Hebrew text into a JSON object.
+    Dictionary: "מלפפוץ" = "מלפפון חמוץ".
+    Rules: Return ONLY JSON. Normalize names to singular. Sum quantities.
     Format: {"action": "add"|"remove", "items": [{"name": string, "quantity": number}]}`;
 
     const response = await openai.chat.completions.create({
@@ -29,7 +20,8 @@ export async function POST(request: NextRequest) {
 
     const content = response.choices[0].message.content || '{}';
     return NextResponse.json(JSON.parse(content));
-  } catch (error) {
-    return NextResponse.json({ error: 'Failed' }, { status: 500 });
+  } catch (error: any) {
+    console.error("Error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

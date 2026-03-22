@@ -1,12 +1,9 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
   typescript: {
-    // זה יגרום ל-Vercel להתעלם משגיאות TypeScript בזמן הבנייה
+    // מתעלם משגיאות טיפוס בזמן הבנייה כדי לאפשר לאתר לעלות
     ignoreBuildErrors: true,
-  },
-  eslint: {
-    // זה יגרום ל-Vercel להתעלם משגיאות עיצוב קוד בזמן הבנייה
-    ignoreDuringBuilds: true,
   },
 };
 
