@@ -3,27 +3,38 @@ import OpenAI from 'openai';
 
 export async function POST(request: NextRequest) {
   try {
-    const { text }: { text: string } = await request.json();
+    const { text } = await request.json();
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
-    const prompt = `Convert Hebrew text into a JSON object.
-    Dictionary: "מלפפוץ" = "מלפפון חמוץ".
-    Special Rules: 
-    - If user says "חצי", use 0.5.
-    - If user says "רבע", use 0.25.
-    - If user says "נשאר חצי", action is "add" but the quantity change should reflect the reduction.
-    Rules: Return ONLY JSON. Normalize names to singular. Sum quantities.
-    Format: {"action": "add"|"remove", "items": [{"name": string, "quantity": number}]}`;
+    const prompt = `You are a professional kitchen manager. Parse the input: "${text}"
+    
+    AMBIGUITY RULES:
+    - Chicken/Meat/Fish: If not specified as "frozen" (קפוא) or "fresh" (טרי), mark as uncertain.
+    - Corn (תירס): If not specified as "frozen" (קפוא), "fresh" (טרי), or "canned" (שימורים), mark as uncertain.
+    
+    CATEGORIES: ["פירות וירקות", "קירור", "קפואים", "טרי", "יבשים", "שימורים", "רטבים/תבלינים", "ניקיון"]
+    LOCATIONS: ["מקרר", "מזווה"]
+
+    Format: {
+      "action": "add"|"remove",
+      "items": [{
+        "name": string, 
+        "quantity": number, 
+        "category": string, 
+        "location": string, 
+        "uncertain": boolean,
+        "options": string[] // If uncertain, provide the relevant category options here
+      }]
+    }`;
 
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt + `\nInput: "${text}"` }],
+      messages: [{ role: 'user', content: prompt }],
       response_format: { type: "json_object" },
       temperature: 0,
     });
 
-    const content = response.choices[0].message.content || '{}';
-    return NextResponse.json(JSON.parse(content));
+    return NextResponse.json(JSON.parse(response.choices[0].message.content || '{}'));
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
