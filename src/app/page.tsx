@@ -72,40 +72,36 @@ export default function HomePage() {
 
   return (
     <main className="min-h-screen bg-slate-50 font-sans pb-10" dir="rtl">
-      {/* Header & Navigation */}
       <header className="bg-indigo-700 text-white p-4 shadow-lg sticky top-0 z-50">
         <div className="max-w-2xl mx-auto flex justify-between items-center">
           <h1 className="text-xl font-black cursor-pointer" onClick={() => setActiveView('HOME')}>Smart Kitchen 🍎</h1>
           <nav className="flex gap-4">
-            <button onClick={() => setActiveView('INVENTORY')} className={`px-3 py-1 rounded-lg font-bold transition ${activeView === 'INVENTORY' ? 'bg-white text-indigo-700' : 'hover:bg-indigo-600'}`}>מלאי</button>
-            <button onClick={() => setActiveView('SHOPPING')} className={`px-3 py-1 rounded-lg font-bold transition ${activeView === 'SHOPPING' ? 'bg-white text-indigo-700' : 'hover:bg-indigo-600'}`}>קניות</button>
+            <button onClick={() => setActiveView('INVENTORY')} className={`px-3 py-1 rounded-lg font-bold transition ${activeView === 'INVENTORY' ? 'bg-white text-indigo-700' : 'hover:bg-indigo-600 text-white'}`}>מלאי</button>
+            <button onClick={() => setActiveView('SHOPPING')} className={`px-3 py-1 rounded-lg font-bold transition ${activeView === 'SHOPPING' ? 'bg-white text-indigo-700' : 'hover:bg-indigo-600 text-white'}`}>קניות</button>
           </nav>
         </div>
       </header>
 
       <div className="max-w-2xl mx-auto p-4">
-        
-        {/* AI Input - Always available except on Home screen if you prefer */}
         {activeView !== 'HOME' && (
-          <form onSubmit={handleAISubmit} className="mb-6 bg-white p-4 rounded-3xl shadow-md border border-indigo-100">
-            <div className="flex gap-2">
+          <div className="mb-6 bg-white p-4 rounded-3xl shadow-md border border-indigo-100">
+            <form onSubmit={handleAISubmit} className="flex gap-2">
               <input value={input} onChange={(e) => setInput(e.target.value)} placeholder='עדכן את המטבח...' className="flex-1 rounded-xl border-none bg-slate-100 p-3 text-md focus:ring-2 focus:ring-indigo-300" />
               <button type="submit" className="bg-indigo-600 text-white px-6 py-2 rounded-xl font-bold">עדכן</button>
-            </div>
+            </form>
             {pendingItems.length > 0 && (
               <div className="mt-4 p-3 bg-amber-50 rounded-xl border border-amber-200">
                 <p className="text-sm font-bold mb-2">איך לסווג את {pendingItems[0].item_name}?</p>
                 <div className="flex gap-2">
                   {pendingItems[0].options?.map(opt => (
-                    <button key={opt} onClick={() => {saveToDb({...pendingItems[0], category: opt, location: 'מקרר'}, 'add'); setPendingItems([]); setInput('');}} className="text-xs bg-white border border-amber-300 px-3 py-1 rounded-lg font-bold">{opt}</button>
+                    <button key={opt} onClick={() => {saveToDb({...pendingItems[0], category: opt, location: (opt === 'קפואים' || opt === 'קירור') ? 'מקרר' : 'מזווה'}, 'add'); setPendingItems([]); setInput('');}} className="text-xs bg-white border border-amber-300 px-3 py-1 rounded-lg font-bold">{opt}</button>
                   ))}
                 </div>
               </div>
             )}
-          </header>
+          </div>
         )}
 
-        {/* --- VIEW: HOME (DASHBOARD) --- */}
         {activeView === 'HOME' && (
           <div className="grid grid-cols-1 gap-6 mt-10">
             <button onClick={() => setActiveView('INVENTORY')} className="aspect-video bg-white rounded-3xl shadow-xl flex flex-col items-center justify-center border-b-8 border-indigo-500 active:scale-95 transition">
@@ -121,7 +117,6 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* --- VIEW: INVENTORY --- */}
         {activeView === 'INVENTORY' && (
           <section>
             <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
@@ -131,21 +126,17 @@ export default function HomePage() {
                 </button>
               ))}
             </div>
-
             <div className="grid gap-3">
-              {inventory
-                .filter(i => invFilter === 'הכל' || i.location === invFilter)
-                .map(item => (
-                  <div key={item.id} className="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-                    <span className="font-bold">{item.item_name} <span className="text-xs font-normal text-slate-400 block">{item.category}</span></span>
-                    <span className="bg-indigo-50 text-indigo-700 px-4 py-1 rounded-full font-black">{item.quantity}</span>
-                  </div>
-                ))}
+              {inventory.filter(i => invFilter === 'הכל' || i.location === invFilter).map(item => (
+                <div key={item.id} className="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                  <span className="font-bold">{item.item_name} <span className="text-xs font-normal text-slate-400 block">{item.category}</span></span>
+                  <span className="bg-indigo-50 text-indigo-700 px-4 py-1 rounded-full font-black">{item.quantity}</span>
+                </div>
+              ))}
             </div>
           </section>
         )}
 
-        {/* --- VIEW: SHOPPING --- */}
         {activeView === 'SHOPPING' && (
           <section>
             <h2 className="text-2xl font-black mb-6 flex items-center gap-2">🛒 רשימת קניות</h2>
@@ -164,7 +155,6 @@ export default function HomePage() {
             ))}
           </section>
         )}
-
       </div>
     </main>
   );
