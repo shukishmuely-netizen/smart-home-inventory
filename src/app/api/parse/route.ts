@@ -6,35 +6,38 @@ export async function POST(request: NextRequest) {
     const { text } = await request.json();
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
-    const prompt = `You are a professional kitchen manager. Parse the input: "${text}"
+    const prompt = `You are a kitchen inventory manager. Parse this long list: "${text}"
     
-    AMBIGUITY RULES:
-    - Chicken/Meat/Fish: If not specified as "frozen" (קפוא) or "fresh" (טרי), mark as uncertain.
-    - Corn (תירס): If not specified as "frozen" (קפוא), "fresh" (טרי), or "canned" (שימורים), mark as uncertain.
-    
+    QUANTITY RULES:
+    - "חצי" = 0.5, "רבע" = 0.25
+    - "מלא" = 10, "קצת" = 1, "0" = 0
+    - If multiple types/sizes mentioned (e.g. "4 large, 1 small"), SUM them.
+    - If no quantity, assume 1.
+
     CATEGORIES: ["פירות וירקות", "קירור", "קפואים", "טרי", "יבשים", "שימורים", "רטבים/תבלינים", "ניקיון"]
     LOCATIONS: ["מקרר", "מזווה"]
 
+    AMBIGUITY: Mark "uncertain": true for: Chicken, Meat, Fish, Corn (unless specified).
+    
     Format: {
-      "action": "add"|"remove",
       "items": [{
         "name": string, 
         "quantity": number, 
         "category": string, 
         "location": string, 
         "uncertain": boolean,
-        "options": string[] // If uncertain, provide the relevant category options here
+        "options": string[]
       }]
     }`;
 
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt }],
+      messages: [{ role: 'system', content: "Return ONLY JSON." }, { role: 'user', content: prompt }],
       response_format: { type: "json_object" },
       temperature: 0,
     });
 
-    return NextResponse.json(JSON.parse(response.choices[0].message.content || '{}'));
+    return NextResponse.json(JSON.parse(response.choices[0].message.content || '{"items":[]}'));
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
