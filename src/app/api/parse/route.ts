@@ -5,17 +5,18 @@ export async function POST(request: NextRequest) {
   try {
     const { text }: { text: string } = await request.json();
     
-    // בדיקה אם המפתח בכלל קיים במערכת
     if (!process.env.OPENAI_API_KEY) {
-      console.error("Missing OpenAI API Key in Environment Variables");
       return NextResponse.json({ error: 'API Key missing' }, { status: 500 });
     }
 
-    const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-    const prompt = `Parse this Hebrew text into JSON. Format: {"action": "add"|"remove", "items": [{"name": string, "quantity": number}]}. Text: "${text}"`;
+    const prompt = `Convert this Hebrew text into a JSON object. 
+    Input: "${text}"
+    Rules:
+    1. Return ONLY the JSON. No talking.
+    2. Format: {"action": "add"|"remove", "items": [{"name": string, "quantity": number}]}
+    3. Use Hebrew for item names.`;
 
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
@@ -23,13 +24,26 @@ export async function POST(request: NextRequest) {
       temperature: 0,
     });
 
-    const content = response.choices[0].message.content || '{}';
-    const cleanedJson = content.replace(/```json|```/g, '').trim();
-    return NextResponse.json(JSON.parse(cleanedJson));
+    let rawContent = response.choices[0].message.content || '{}';
+    
+    // --- מנקה ה-JSON החזק ביותר בעולם ---
+    // 1. מסיר סימני Markdown של קוד (```json או ```)
+    let cleaned = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();
+    
+    // 2. מחפש את הסוגריים המסולסלים הראשונים והאחרונים (זורק כל טקסט לפני או אחרי)
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    
+    if (firstBrace !== -1 && lastBrace !== -1) {
+      cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+    }
+
+    console.log("FINAL CLEANED JSON:", cleaned); // זה יופיע בלוגים של Vercel
+
+    return NextResponse.json(JSON.parse(cleaned));
 
   } catch (error: any) {
-    // השורה הזו היא הקריטית - היא תדפיס לנו את השגיאה האמיתית בלוגים של Vercel
-    console.error("OPENAI_ERROR_DETAILS:", error.message || error);
-    return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+    console.error("DETAILED ERROR:", error);
+    return NextResponse.json({ error: 'Failed to process request' }, { status: 500 });
   }
 }
