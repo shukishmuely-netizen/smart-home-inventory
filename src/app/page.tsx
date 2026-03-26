@@ -23,7 +23,6 @@ export default function HomePage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState('');
 
-  // טיימר להודעות קופצות
   const statusTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const showStatus = (msg: string, autoClear: boolean = false) => {
@@ -98,7 +97,7 @@ export default function HomePage() {
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
-    showStatus('⚡ מעבד נתונים...', false); // לא מנקה אוטומטית כי העיבוד יכול לקחת זמן
+    showStatus('⚡ מעבד נתונים...', false);
     
     try {
       const res = await fetch('/api/parse', { method: 'POST', body: JSON.stringify({ text: input }) });
@@ -162,7 +161,6 @@ export default function HomePage() {
         <div className="max-w-2xl mx-auto flex justify-between items-center">
           <h1 className="text-2xl font-black cursor-pointer pointer-events-auto drop-shadow-md" onClick={() => {setActiveView('HOME'); setSearchTerm('');}}>Smart Kitchen 🍎</h1>
           <nav className="flex gap-2 items-center">
-            {/* כפתור רענון חדש */}
             <button onClick={handleRefresh} className="px-3 py-2 rounded-xl text-lg transition-all pointer-events-auto bg-black/10 hover:bg-black/20" title="רענן נתונים">🔄</button>
             <button onClick={() => {setActiveView('INVENTORY'); setSearchTerm(''); setStatus('');}} className={`px-4 py-2 rounded-xl font-bold text-sm transition-all pointer-events-auto ${activeView === 'INVENTORY' ? 'bg-white text-teal-700 shadow-lg' : 'bg-black/20 hover:bg-black/30'}`}>מלאי</button>
             <button onClick={() => {setActiveView('SHOPPING'); setSearchTerm(''); setStatus('');}} className={`px-4 py-2 rounded-xl font-bold text-sm transition-all pointer-events-auto ${activeView === 'SHOPPING' ? 'bg-white text-rose-700 shadow-lg' : 'bg-black/20 hover:bg-black/30'}`}>קניות</button>
@@ -209,7 +207,6 @@ export default function HomePage() {
                 {activeView === 'INVENTORY' ? 'עדכן מלאי ✨' : 'הוסף לקניות 🛒'}
               </button>
             </form>
-            {/* הודעת סטטוס מופיעה רק כשיש לה ערך, נעלמת אוטומטית */}
             {status && (
               <div className="mt-4 flex justify-center animate-in fade-in slide-in-from-bottom-2">
                 <span className={`px-4 py-2 rounded-full text-sm font-bold shadow-sm ${status.includes('❌') ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-700'}`}>
@@ -354,20 +351,30 @@ function InventoryCard({ item, editingId, editNameValue, setEditingId, setEditNa
       <div className="text-right flex-1">
         {editingId === item.id ? (
           <div className="flex items-center gap-2 mb-1">
-            <input autoFocus value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} className="border-b-2 border-teal-500 bg-teal-50 px-2 py-1 outline-none font-bold text-lg w-[120px] pointer-events-auto" />
-            <button onClick={() => saveEditedName(item.id, 'inventory_items')} className="bg-green-100 text-green-700 p-2 rounded-lg pointer-events-auto">✅</button>
+            <input 
+              autoFocus 
+              value={editNameValue} 
+              onChange={(e) => setEditNameValue(e.target.value)} 
+              onKeyDown={(e) => e.key === 'Enter' && saveEditedName(item.id, 'inventory_items')}
+              className="border-b-2 border-teal-500 bg-teal-50 px-2 py-1 outline-none font-bold text-lg w-[140px] pointer-events-auto" 
+            />
+            <button onClick={() => saveEditedName(item.id, 'inventory_items')} className="bg-green-100 text-green-700 p-2 rounded-lg pointer-events-auto shadow-sm">✅</button>
           </div>
         ) : (
-          <div className="flex items-center gap-2">
-            <span className="block font-bold text-lg text-slate-800">{item.item_name}</span>
-            <button onClick={() => {setEditingId(item.id); setEditNameValue(item.item_name);}} className="text-slate-300 hover:text-amber-500 pointer-events-auto">✏️</button>
-          </div>
+          <span 
+            onClick={() => {setEditingId(item.id); setEditNameValue(item.item_name);}} 
+            className="block font-bold text-lg text-slate-800 cursor-pointer hover:text-teal-600 hover:underline decoration-dashed decoration-slate-300 pointer-events-auto transition-colors"
+            title="לחץ לעריכת השם"
+          >
+            {item.item_name}
+          </span>
         )}
         <span className="text-[10px] uppercase font-bold text-slate-400">{item.category} • {item.location}</span>
       </div>
       <div className="flex items-center gap-2" dir="ltr">
-        <button onClick={onMinus} className="w-9 h-9 rounded-full bg-rose-100 text-rose-600 font-black pointer-events-auto shadow-sm hover:bg-rose-200">-</button>
+        {/* שינוי סדר: חצי, אחר כך מינוס */}
         <button onClick={onHalf} className="w-8 h-8 rounded-full bg-amber-100 text-amber-600 font-bold text-xs pointer-events-auto shadow-sm hover:bg-amber-200">½</button>
+        <button onClick={onMinus} className="w-9 h-9 rounded-full bg-rose-100 text-rose-600 font-black pointer-events-auto shadow-sm hover:bg-rose-200">-</button>
         <span className={`text-xl font-black min-w-[36px] text-center ${item.quantity <= 2 ? 'text-rose-600' : 'text-slate-700'}`}>{item.quantity}</span>
         <button onClick={onPlus} className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-600 font-black pointer-events-auto shadow-sm hover:bg-emerald-200">+</button>
       </div>
@@ -379,20 +386,29 @@ function InventoryCard({ item, editingId, editNameValue, setEditingId, setEditNa
 function ShoppingCard({ item, editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName, onRemove }: any) {
   return (
     <div className="flex justify-between items-center gap-4 bg-white p-4 rounded-[1.5rem] shadow-sm border border-rose-50 hover:border-rose-100 transition-colors">
-      <div className="flex items-center gap-3 flex-1">
+      <div className="flex items-center gap-4 flex-1">
         <button onClick={() => onRemove(item)} className="bg-rose-100 text-rose-600 hover:bg-rose-200 px-4 py-2 rounded-xl text-sm font-bold shadow-sm pointer-events-auto transition-colors">
           הסר
         </button>
         {editingId === item.id ? (
           <div className="flex items-center gap-2">
-            <input autoFocus value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} className="border-b-2 border-rose-500 bg-rose-50 px-2 py-1 outline-none font-bold text-lg w-[120px] pointer-events-auto" />
-            <button onClick={() => saveEditedName(item.id, 'shopping_list')} className="bg-green-100 text-green-700 p-2 rounded-lg pointer-events-auto">✅</button>
+            <input 
+              autoFocus 
+              value={editNameValue} 
+              onChange={(e) => setEditNameValue(e.target.value)} 
+              onKeyDown={(e) => e.key === 'Enter' && saveEditedName(item.id, 'shopping_list')}
+              className="border-b-2 border-rose-500 bg-rose-50 px-2 py-1 outline-none font-bold text-lg w-[140px] pointer-events-auto" 
+            />
+            <button onClick={() => saveEditedName(item.id, 'shopping_list')} className="bg-green-100 text-green-700 p-2 rounded-lg pointer-events-auto shadow-sm">✅</button>
           </div>
         ) : (
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-slate-800 text-lg">{item.item_name}</span>
-            <button onClick={() => {setEditingId(item.id); setEditNameValue(item.item_name);}} className="text-slate-300 hover:text-amber-500 pointer-events-auto">✏️</button>
-          </div>
+          <span 
+            onClick={() => {setEditingId(item.id); setEditNameValue(item.item_name);}} 
+            className="font-bold text-slate-800 text-lg cursor-pointer hover:text-rose-600 hover:underline decoration-dashed decoration-slate-300 pointer-events-auto transition-colors"
+            title="לחץ לעריכת השם"
+          >
+            {item.item_name}
+          </span>
         )}
       </div>
     </div>
