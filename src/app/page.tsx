@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 
 type Item = { id?: string; item_name: string; quantity: number; category: string; location: string; uncertain?: boolean; options?: string[] };
@@ -18,10 +18,23 @@ export default function HomePage() {
   const [status, setStatus] = useState('');
   const [pendingItems, setPendingItems] = useState<Item[]>([]);
   const [lowStockAlerts, setLowStockAlerts] = useState<Item[]>([]);
-  const [removedItems, setRemovedItems] = useState<any[]>([]); // רשימת "הוסרו לאחרונה"
+  const [removedItems, setRemovedItems] = useState<any[]>([]);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState('');
+
+  // טיימר להודעות קופצות
+  const statusTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const showStatus = (msg: string, autoClear: boolean = false) => {
+    setStatus(msg);
+    if (statusTimeoutRef.current) clearTimeout(statusTimeoutRef.current);
+    if (autoClear) {
+      statusTimeoutRef.current = setTimeout(() => {
+        setStatus('');
+      }, 4000);
+    }
+  };
 
   const fetchData = async () => {
     const { data: inv } = await supabase.from('inventory_items').select('*');
@@ -34,6 +47,11 @@ export default function HomePage() {
 
   useEffect(() => { fetchData(); }, []);
 
+  const handleRefresh = async () => {
+    showStatus('🔄 מרענן נתונים...', true);
+    await fetchData();
+  };
+
   const saveEditedName = async (id: string, table: 'inventory_items' | 'shopping_list') => {
     if (editNameValue.trim()) {
       await supabase.from(table).update({ item_name: editNameValue.trim() }).eq('id', id);
@@ -44,10 +62,7 @@ export default function HomePage() {
 
   const updateExactQuantity = async (item: Item, newQty: number) => {
     await supabase.from('inventory_items').update({ quantity: newQty }).eq('id', item.id);
-    
-    // בדיקה: האם המוצר כבר קיים ברשימת הקניות?
     const alreadyInShopping = shoppingList.some(s => s.item_name === item.item_name);
-    
     if (newQty <= 2 && newQty < item.quantity && !alreadyInShopping) {
       setLowStockAlerts(prev => [...prev.filter(i => i.item_name !== item.item_name), { ...item, quantity: newQty }]);
     }
@@ -83,7 +98,8 @@ export default function HomePage() {
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
-    setStatus('⚡ מעבד נתונים...');
+    showStatus('⚡ מעבד נתונים...', false); // לא מנקה אוטומטית כי העיבוד יכול לקחת זמן
+    
     try {
       const res = await fetch('/api/parse', { method: 'POST', body: JSON.stringify({ text: input }) });
       const data = await res.json();
@@ -95,7 +111,7 @@ export default function HomePage() {
           const finalName = item.quantity > 1 ? `${name} (${item.quantity})` : name;
           await supabase.from('shopping_list').insert([{ item_name: finalName, category: item.category || 'כללי' }]);
         }
-        setStatus('✅ נוסף לרשימת הקניות!');
+        showStatus('✅ נוסף לרשימת הקניות!', true);
       } else {
         const certain = items.filter((i: any) => !i.uncertain);
         const uncertain = items.filter((i: any) => i.uncertain && (i.name || i.item_name));
@@ -103,30 +119,29 @@ export default function HomePage() {
 
         if (uncertain.length > 0) {
           setPendingItems(uncertain.map((i: any) => ({ ...i, item_name: i.name || i.item_name })));
-          setStatus(`צריך עזרה עם כמה פריטים`);
+          showStatus(`צריך עזרה עם כמה פריטים`, false);
         } else {
-          setStatus('✅ המלאי עודכן!');
+          showStatus('✅ המלאי עודכן!', true);
         }
       }
       setInput('');
       fetchData();
-    } catch { setStatus('❌ שגיאה'); }
+    } catch { showStatus('❌ שגיאה בעדכון', true); }
   };
 
   const addToShopping = async (item: Item) => {
     await supabase.from('shopping_list').insert([{ item_name: item.item_name, category: item.category || 'כללי' }]);
     setLowStockAlerts(prev => prev.filter(i => i.item_name !== item.item_name));
+    showStatus('✅ נוסף לקניות', true);
     fetchData();
   };
 
-  // מחיקת פריט מרשימת הקניות והעברתו ל"הוסרו לאחרונה"
   const handleRemoveFromShopping = async (shopItem: any) => {
     setRemovedItems(prev => [...prev, shopItem]);
     await supabase.from('shopping_list').delete().eq('id', shopItem.id);
     fetchData();
   };
 
-  // שחזור פריט מ"הוסרו לאחרונה" חזרה לרשימה
   const handleRestoreToShopping = async (shopItem: any) => {
     setRemovedItems(prev => prev.filter(i => i.id !== shopItem.id));
     await supabase.from('shopping_list').insert([{ item_name: shopItem.item_name, category: shopItem.category }]);
@@ -146,9 +161,11 @@ export default function HomePage() {
       <header className={`bg-gradient-to-r ${headerGradient} text-white p-4 shadow-xl sticky top-0 z-[1000] transition-colors duration-500`}>
         <div className="max-w-2xl mx-auto flex justify-between items-center">
           <h1 className="text-2xl font-black cursor-pointer pointer-events-auto drop-shadow-md" onClick={() => {setActiveView('HOME'); setSearchTerm('');}}>Smart Kitchen 🍎</h1>
-          <nav className="flex gap-2">
-            <button onClick={() => {setActiveView('INVENTORY'); setSearchTerm('');}} className={`px-4 py-2 rounded-xl font-bold text-sm transition-all pointer-events-auto ${activeView === 'INVENTORY' ? 'bg-white text-teal-700 shadow-lg' : 'bg-black/20 hover:bg-black/30'}`}>מלאי</button>
-            <button onClick={() => {setActiveView('SHOPPING'); setSearchTerm('');}} className={`px-4 py-2 rounded-xl font-bold text-sm transition-all pointer-events-auto ${activeView === 'SHOPPING' ? 'bg-white text-rose-700 shadow-lg' : 'bg-black/20 hover:bg-black/30'}`}>קניות</button>
+          <nav className="flex gap-2 items-center">
+            {/* כפתור רענון חדש */}
+            <button onClick={handleRefresh} className="px-3 py-2 rounded-xl text-lg transition-all pointer-events-auto bg-black/10 hover:bg-black/20" title="רענן נתונים">🔄</button>
+            <button onClick={() => {setActiveView('INVENTORY'); setSearchTerm(''); setStatus('');}} className={`px-4 py-2 rounded-xl font-bold text-sm transition-all pointer-events-auto ${activeView === 'INVENTORY' ? 'bg-white text-teal-700 shadow-lg' : 'bg-black/20 hover:bg-black/30'}`}>מלאי</button>
+            <button onClick={() => {setActiveView('SHOPPING'); setSearchTerm(''); setStatus('');}} className={`px-4 py-2 rounded-xl font-bold text-sm transition-all pointer-events-auto ${activeView === 'SHOPPING' ? 'bg-white text-rose-700 shadow-lg' : 'bg-black/20 hover:bg-black/30'}`}>קניות</button>
           </nav>
         </div>
       </header>
@@ -185,14 +202,21 @@ export default function HomePage() {
         )}
 
         {activeView !== 'HOME' && (
-          <div className="mb-6 bg-white p-5 rounded-[2rem] shadow-xl border border-slate-100">
+          <div className="mb-6 bg-white p-5 rounded-[2rem] shadow-xl border border-slate-100 relative">
             <form onSubmit={handleUpdate} className="space-y-3">
               <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder={activeView === 'INVENTORY' ? "מה הוספנו למלאי? (למשל: 2 חלב, חצי אבטיח)" : "מה חסר? (למשל: עגבניות, 3 קולה)"} className="w-full rounded-2xl border-none bg-slate-50 p-4 text-md focus:ring-2 focus:ring-amber-400 min-h-[80px] pointer-events-auto" />
               <button type="submit" className={`w-full text-white p-4 rounded-2xl font-bold text-xl shadow-md active:scale-95 transition-all pointer-events-auto ${activeView === 'INVENTORY' ? 'bg-teal-600 hover:bg-teal-700' : 'bg-rose-600 hover:bg-rose-700'}`}>
                 {activeView === 'INVENTORY' ? 'עדכן מלאי ✨' : 'הוסף לקניות 🛒'}
               </button>
             </form>
-            {status && <p className={`text-center mt-3 text-sm font-bold ${status.includes('❌') ? 'text-red-500' : 'text-teal-600'}`}>{status}</p>}
+            {/* הודעת סטטוס מופיעה רק כשיש לה ערך, נעלמת אוטומטית */}
+            {status && (
+              <div className="mt-4 flex justify-center animate-in fade-in slide-in-from-bottom-2">
+                <span className={`px-4 py-2 rounded-full text-sm font-bold shadow-sm ${status.includes('❌') ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-700'}`}>
+                  {status}
+                </span>
+              </div>
+            )}
           </div>
         )}
 
@@ -236,7 +260,6 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* INVENTORY VIEW */}
         {activeView === 'INVENTORY' && (
           <section className="space-y-6">
             <div className="flex gap-2 p-1 bg-white rounded-2xl shadow-sm border border-slate-100">
@@ -269,10 +292,10 @@ export default function HomePage() {
                 ))}
               </div>
             )}
+            {filteredInventory.length === 0 && <div className="text-center p-8 text-slate-400 font-bold">לא נמצאו פריטים 🧐</div>}
           </section>
         )}
 
-        {/* SHOPPING VIEW */}
         {activeView === 'SHOPPING' && (
           <section className="space-y-6">
             {sortBy === 'category' ? (
@@ -302,7 +325,6 @@ export default function HomePage() {
             
             {filteredShoppingList.length === 0 && <div className="text-center p-8 text-slate-400 font-bold">העגלה ריקה 🛒</div>}
 
-            {/* "פח מחזור" למחיקות אחרונות */}
             {removedItems.length > 0 && (
               <div className="mt-12 pt-8 border-t-2 border-slate-200">
                 <h3 className="font-black text-slate-400 text-sm uppercase mb-4 pr-2">🗑️ הוסרו לאחרונה:</h3>
@@ -353,7 +375,7 @@ function InventoryCard({ item, editingId, editNameValue, setEditingId, setEditNa
   );
 }
 
-// כרטיס קניות (עכשיו עם כפתור "הסר")
+// כרטיס קניות
 function ShoppingCard({ item, editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName, onRemove }: any) {
   return (
     <div className="flex justify-between items-center gap-4 bg-white p-4 rounded-[1.5rem] shadow-sm border border-rose-50 hover:border-rose-100 transition-colors">
