@@ -6,19 +6,20 @@ export async function POST(request: NextRequest) {
     const { text } = await request.json();
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
-    const prompt = `You are a kitchen inventory manager. Parse this long list: "${text}"
+    const prompt = `You are a kitchen inventory manager. Parse this list: "${text}"
     
     QUANTITY RULES:
     - "חצי" = 0.5, "רבע" = 0.25
     - "מלא" = 10, "קצת" = 1, "0" = 0
-    - If multiple types/sizes mentioned (e.g. "4 large, 1 small"), SUM them.
+    - If multiple types/sizes mentioned, SUM them.
     - If no quantity, assume 1.
 
     CATEGORIES: ["פירות וירקות", "קירור", "קפואים", "טרי", "יבשים", "שימורים", "רטבים/תבלינים", "ניקיון"]
     LOCATIONS: ["מקרר", "מזווה"]
 
-    AMBIGUITY: Mark "uncertain": true for: Chicken, Meat, Fish, Corn (unless specified).
-    
+    AMBIGUITY: If an item can be in multiple states (e.g. Corn, Peas, Chicken, Meat, Beans) and the state is NOT specified, mark "uncertain": true.
+    CRITICAL: If "uncertain" is true, YOU MUST ALWAYS provide these exact options in the options array: ["טרי", "קפואים", "שימורים", "יבשים"].
+
     Format: {
       "items": [{
         "name": string, 

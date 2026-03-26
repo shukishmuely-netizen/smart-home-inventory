@@ -27,7 +27,7 @@ export default function HomePage() {
   useEffect(() => { fetchData(); }, []);
 
   const saveItem = async (item: Item, action: 'add' | 'remove' = 'add') => {
-    const name = item.item_name || (item as any).name; // הגנה מפני שמות שדות שונים מה-AI
+    const name = item.item_name || (item as any).name;
     if (!name) return;
 
     const { data: existing } = await supabase.from('inventory_items').select('*').eq('item_name', name).maybeSingle();
@@ -81,7 +81,6 @@ export default function HomePage() {
 
   return (
     <main className="min-h-screen bg-slate-50 font-sans pb-20 text-slate-900" dir="rtl">
-      {/* Header - Fixed Z-Index & Clicks */}
       <header className="bg-indigo-700 text-white p-4 shadow-2xl sticky top-0 z-[1000] border-b border-indigo-800">
         <div className="max-w-2xl mx-auto flex justify-between items-center">
           <h1 className="text-2xl font-black cursor-pointer pointer-events-auto" onClick={() => setActiveView('HOME')}>Smart Kitchen 🍎</h1>
@@ -123,7 +122,7 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* Low Stock Alerts (במקום ה-Confirm הקופץ) */}
+        {/* Low Stock Alerts */}
         {lowStockAlerts.length > 0 && (
           <div className="mb-6 space-y-3">
             {lowStockAlerts.map(alert => (
@@ -138,28 +137,41 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* Classification Queue (Fixed Empty Boxes) */}
+        {/* Classification Queue (WITH FALLBACK OPTIONS) */}
         {pendingItems.length > 0 && (
           <div className="mb-8 p-6 bg-amber-50 rounded-[2rem] border-2 border-amber-200 shadow-lg">
             <h3 className="font-black text-amber-900 mb-4 flex items-center gap-2">🤔 צריך סיווג ל:</h3>
             <div className="space-y-4">
-              {pendingItems.map((item, idx) => (
-                <div key={idx} className="bg-white p-5 rounded-2xl shadow-sm border border-amber-100">
-                  <p className="font-bold text-lg mb-3">איך לסווג את "{item.item_name}"?</p>
-                  <div className="flex flex-wrap gap-2">
-                    {item.options?.map(opt => (
-                      <button key={opt} onClick={async () => {
-                        await saveItem({...item, category: opt, location: (opt === 'קפואים' || opt === 'קירור' || opt === 'טרי') ? 'מקרר' : 'מזווה'});
-                        setPendingItems(prev => prev.filter(p => p.item_name !== item.item_name));
-                        fetchData();
-                      }} className="bg-slate-100 hover:bg-indigo-600 hover:text-white px-5 py-2 rounded-xl font-bold transition-all pointer-events-auto">
-                        {opt}
-                      </button>
-                    ))}
-                    <button onClick={() => setPendingItems(prev => prev.filter(p => p.item_name !== item.item_name))} className="text-slate-400 text-xs px-2 pointer-events-auto">התעלם</button>
+              {pendingItems.map((item, idx) => {
+                // רשת ביטחון: אם אין אופציות, תמיד נציג את אלו
+                const options = (item.options && item.options.length > 0) 
+                  ? item.options 
+                  : ['טרי', 'קפואים', 'שימורים', 'יבשים'];
+
+                return (
+                  <div key={idx} className="bg-white p-5 rounded-2xl shadow-sm border border-amber-100">
+                    <p className="font-bold text-lg mb-3">איך לסווג את "{item.item_name}"?</p>
+                    <div className="flex flex-wrap gap-2">
+                      {options.map(opt => (
+                        <button key={opt} onClick={async () => {
+                          // סיווג חכם של מיקום לפי הבחירה
+                          const isFridge = ['קפואים', 'קירור', 'טרי'].includes(opt);
+                          await saveItem({
+                            ...item, 
+                            category: opt, 
+                            location: isFridge ? 'מקרר' : 'מזווה'
+                          });
+                          setPendingItems(prev => prev.filter(p => p.item_name !== item.item_name));
+                          fetchData();
+                        }} className="bg-slate-100 hover:bg-indigo-600 hover:text-white px-5 py-2 rounded-xl font-bold transition-all pointer-events-auto">
+                          {opt}
+                        </button>
+                      ))}
+                      <button onClick={() => setPendingItems(prev => prev.filter(p => p.item_name !== item.item_name))} className="text-slate-400 text-xs px-2 pointer-events-auto">התעלם</button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -177,7 +189,7 @@ export default function HomePage() {
                 <div key={item.id} className="flex justify-between items-center bg-white p-5 rounded-3xl shadow-sm border border-slate-100">
                   <div className="text-right">
                     <span className="block font-bold text-lg">{item.item_name}</span>
-                    <span className="text-[10px] uppercase font-bold text-slate-400">{item.category}</span>
+                    <span className="text-[10px] uppercase font-bold text-slate-400">{item.category} • {item.location}</span>
                   </div>
                   <div className="flex items-center gap-3">
                     <button onClick={() => saveItem({...item, quantity: 0.5}, 'remove')} className="w-10 h-10 rounded-full bg-slate-50 text-red-500 font-bold pointer-events-auto">-</button>
