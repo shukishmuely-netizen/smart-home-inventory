@@ -46,9 +46,9 @@ export default function HomePage() {
 
   useEffect(() => { fetchData(); }, []);
 
-  const handleRefresh = async () => {
-    showStatus('🔄 מרענן נתונים...', true);
-    await fetchData();
+  // הפונקציה שעודכנה: עכשיו עושה ריפרש מלא לעמוד
+  const handleRefresh = () => {
+    window.location.reload();
   };
 
   const saveEditedName = async (id: string, table: 'inventory_items' | 'shopping_list') => {
@@ -161,7 +161,7 @@ export default function HomePage() {
         <div className="max-w-2xl mx-auto flex justify-between items-center">
           <h1 className="text-2xl font-black cursor-pointer pointer-events-auto drop-shadow-md" onClick={() => {setActiveView('HOME'); setSearchTerm('');}}>Smart Kitchen 🍎</h1>
           <nav className="flex gap-2 items-center">
-            <button onClick={handleRefresh} className="px-3 py-2 rounded-xl text-lg transition-all pointer-events-auto bg-black/10 hover:bg-black/20" title="רענן נתונים">🔄</button>
+            <button onClick={handleRefresh} className="px-3 py-2 rounded-xl text-lg transition-all pointer-events-auto bg-black/10 hover:bg-black/20" title="רענן עמוד">🔄</button>
             <button onClick={() => {setActiveView('INVENTORY'); setSearchTerm(''); setStatus('');}} className={`px-4 py-2 rounded-xl font-bold text-sm transition-all pointer-events-auto ${activeView === 'INVENTORY' ? 'bg-white text-teal-700 shadow-lg' : 'bg-black/20 hover:bg-black/30'}`}>מלאי</button>
             <button onClick={() => {setActiveView('SHOPPING'); setSearchTerm(''); setStatus('');}} className={`px-4 py-2 rounded-xl font-bold text-sm transition-all pointer-events-auto ${activeView === 'SHOPPING' ? 'bg-white text-rose-700 shadow-lg' : 'bg-black/20 hover:bg-black/30'}`}>קניות</button>
           </nav>
@@ -372,7 +372,6 @@ function InventoryCard({ item, editingId, editNameValue, setEditingId, setEditNa
         <span className="text-[10px] uppercase font-bold text-slate-400">{item.category} • {item.location}</span>
       </div>
       <div className="flex items-center gap-2" dir="ltr">
-        {/* שינוי סדר: חצי, אחר כך מינוס */}
         <button onClick={onHalf} className="w-8 h-8 rounded-full bg-amber-100 text-amber-600 font-bold text-xs pointer-events-auto shadow-sm hover:bg-amber-200">½</button>
         <button onClick={onMinus} className="w-9 h-9 rounded-full bg-rose-100 text-rose-600 font-black pointer-events-auto shadow-sm hover:bg-rose-200">-</button>
         <span className={`text-xl font-black min-w-[36px] text-center ${item.quantity <= 2 ? 'text-rose-600' : 'text-slate-700'}`}>{item.quantity}</span>
