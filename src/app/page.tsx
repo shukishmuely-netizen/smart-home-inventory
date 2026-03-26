@@ -10,10 +10,16 @@ export default function HomePage() {
   const [inventory, setInventory] = useState<Item[]>([]);
   const [shoppingList, setShoppingList] = useState<any[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
+  
   const [input, setInput] = useState('');
+  const [searchTerm, setSearchTerm] = useState(''); // שורת חיפוש
   const [status, setStatus] = useState('מוכן לעדכון...');
   const [pendingItems, setPendingItems] = useState<Item[]>([]);
   const [lowStockAlerts, setLowStockAlerts] = useState<Item[]>([]);
+
+  // מצב עריכת שם פריט
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editNameValue, setEditNameValue] = useState('');
 
   const fetchData = async () => {
     const { data: inv } = await supabase.from('inventory_items').select('*');
@@ -25,6 +31,17 @@ export default function HomePage() {
   };
 
   useEffect(() => { fetchData(); }, []);
+
+  // פונקציית שמירת עריכת שם
+  const saveEditedName = async (id: string, table: 'inventory_items' | 'shopping_list') => {
+    if (!editNameValue.trim()) {
+      setEditingId(null);
+      return;
+    }
+    await supabase.from(table).update({ item_name: editNameValue.trim() }).eq('id', id);
+    setEditingId(null);
+    fetchData();
+  };
 
   const saveItem = async (item: Item, action: 'add' | 'remove' = 'add') => {
     const name = item.item_name || (item as any).name;
@@ -79,14 +96,29 @@ export default function HomePage() {
     fetchData();
   };
 
+  const markAsBought = async (shopItem: any) => {
+    await saveItem({ item_name: shopItem.item_name, quantity: 1, category: shopItem.category, location: 'מקרר' }, 'add');
+    await supabase.from('shopping_list').delete().eq('id', shopItem.id);
+    fetchData();
+  };
+
+  // סינון וסידור אלפביתי
+  const filteredInventory = inventory
+    .filter(i => i.item_name.includes(searchTerm))
+    .sort((a, b) => a.item_name.localeCompare(b.item_name, 'he'));
+
+  const filteredShoppingList = shoppingList
+    .filter(s => s.item_name.includes(searchTerm))
+    .sort((a, b) => a.item_name.localeCompare(b.item_name, 'he'));
+
   return (
     <main className="min-h-screen bg-slate-50 font-sans pb-20 text-slate-900" dir="rtl">
       <header className="bg-indigo-700 text-white p-4 shadow-2xl sticky top-0 z-[1000] border-b border-indigo-800">
         <div className="max-w-2xl mx-auto flex justify-between items-center">
-          <h1 className="text-2xl font-black cursor-pointer pointer-events-auto" onClick={() => setActiveView('HOME')}>Smart Kitchen 🍎</h1>
+          <h1 className="text-2xl font-black cursor-pointer pointer-events-auto" onClick={() => {setActiveView('HOME'); setSearchTerm('');}}>Smart Kitchen 🍎</h1>
           <nav className="flex gap-2">
-            <button onClick={() => setActiveView('INVENTORY')} className={`px-4 py-2 rounded-xl font-bold text-sm transition-all pointer-events-auto ${activeView === 'INVENTORY' ? 'bg-white text-indigo-700 shadow-lg' : 'bg-indigo-600 hover:bg-indigo-500'}`}>מלאי</button>
-            <button onClick={() => setActiveView('SHOPPING')} className={`px-4 py-2 rounded-xl font-bold text-sm transition-all pointer-events-auto ${activeView === 'SHOPPING' ? 'bg-white text-emerald-700 shadow-lg' : 'bg-indigo-600 hover:bg-indigo-500'}`}>קניות</button>
+            <button onClick={() => {setActiveView('INVENTORY'); setSearchTerm('');}} className={`px-4 py-2 rounded-xl font-bold text-sm transition-all pointer-events-auto ${activeView === 'INVENTORY' ? 'bg-white text-indigo-700 shadow-lg' : 'bg-indigo-600 hover:bg-indigo-500'}`}>מלאי</button>
+            <button onClick={() => {setActiveView('SHOPPING'); setSearchTerm('');}} className={`px-4 py-2 rounded-xl font-bold text-sm transition-all pointer-events-auto ${activeView === 'SHOPPING' ? 'bg-white text-emerald-700 shadow-lg' : 'bg-indigo-600 hover:bg-indigo-500'}`}>קניות</button>
           </nav>
         </div>
       </header>
@@ -107,14 +139,27 @@ export default function HomePage() {
           </div>
         )}
 
+        {/* שורת חיפוש */}
+        {activeView !== 'HOME' && (
+          <div className="mb-4">
+            <input 
+              type="text" 
+              placeholder="🔍 חפש מוצר..." 
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full rounded-2xl border-none bg-white p-4 text-md shadow-md focus:ring-2 focus:ring-indigo-400 pointer-events-auto"
+            />
+          </div>
+        )}
+
         {/* AI Input Area */}
         {activeView !== 'HOME' && (
-          <div className="mt-4 mb-6 bg-white p-5 rounded-[2rem] shadow-xl border border-indigo-50">
+          <div className="mb-6 bg-white p-5 rounded-[2rem] shadow-xl border border-indigo-50">
             <form onSubmit={handleUpdate} className="space-y-3">
               <textarea 
                 value={input} onChange={(e) => setInput(e.target.value)} 
                 placeholder="הדבק רשימה או כתוב חופשי..." 
-                className="w-full rounded-2xl border-none bg-slate-100 p-4 text-md focus:ring-2 focus:ring-indigo-400 min-h-[100px] pointer-events-auto"
+                className="w-full rounded-2xl border-none bg-slate-100 p-4 text-md focus:ring-2 focus:ring-indigo-400 min-h-[80px] pointer-events-auto"
               />
               <button type="submit" className="w-full bg-indigo-600 text-white p-4 rounded-2xl font-bold text-xl shadow-lg active:scale-95 transition-all pointer-events-auto">עדכן מטבח ✨</button>
             </form>
@@ -123,56 +168,17 @@ export default function HomePage() {
         )}
 
         {/* Low Stock Alerts */}
-        {lowStockAlerts.length > 0 && (
+        {lowStockAlerts.length > 0 && activeView === 'INVENTORY' && (
           <div className="mb-6 space-y-3">
             {lowStockAlerts.map(alert => (
-              <div key={alert.item_name} className="bg-red-50 border-2 border-red-100 p-4 rounded-2xl flex justify-between items-center animate-in fade-in slide-in-from-top-4">
+              <div key={alert.item_name} className="bg-red-50 border-2 border-red-100 p-4 rounded-2xl flex justify-between items-center">
                 <span className="font-bold text-red-900 text-sm">נשארו רק {alert.quantity} של "{alert.item_name}". להוסיף לקניות?</span>
                 <div className="flex gap-2">
-                  <button onClick={() => addToShopping(alert)} className="bg-red-600 text-white px-4 py-2 rounded-xl font-bold text-xs pointer-events-auto">כן, תוסיף</button>
-                  <button onClick={() => setLowStockAlerts(prev => prev.filter(i => i.item_name !== alert.item_name))} className="bg-white text-red-600 border border-red-200 px-4 py-2 rounded-xl font-bold text-xs pointer-events-auto">לא עכשיו</button>
+                  <button onClick={() => addToShopping(alert)} className="bg-red-600 text-white px-4 py-2 rounded-xl font-bold text-xs pointer-events-auto">כן</button>
+                  <button onClick={() => setLowStockAlerts(prev => prev.filter(i => i.item_name !== alert.item_name))} className="bg-white text-red-600 border border-red-200 px-4 py-2 rounded-xl font-bold text-xs pointer-events-auto">לא</button>
                 </div>
               </div>
             ))}
-          </div>
-        )}
-
-        {/* Classification Queue (WITH FALLBACK OPTIONS) */}
-        {pendingItems.length > 0 && (
-          <div className="mb-8 p-6 bg-amber-50 rounded-[2rem] border-2 border-amber-200 shadow-lg">
-            <h3 className="font-black text-amber-900 mb-4 flex items-center gap-2">🤔 צריך סיווג ל:</h3>
-            <div className="space-y-4">
-              {pendingItems.map((item, idx) => {
-                // רשת ביטחון: אם אין אופציות, תמיד נציג את אלו
-                const options = (item.options && item.options.length > 0) 
-                  ? item.options 
-                  : ['טרי', 'קפואים', 'שימורים', 'יבשים'];
-
-                return (
-                  <div key={idx} className="bg-white p-5 rounded-2xl shadow-sm border border-amber-100">
-                    <p className="font-bold text-lg mb-3">איך לסווג את "{item.item_name}"?</p>
-                    <div className="flex flex-wrap gap-2">
-                      {options.map(opt => (
-                        <button key={opt} onClick={async () => {
-                          // סיווג חכם של מיקום לפי הבחירה
-                          const isFridge = ['קפואים', 'קירור', 'טרי'].includes(opt);
-                          await saveItem({
-                            ...item, 
-                            category: opt, 
-                            location: isFridge ? 'מקרר' : 'מזווה'
-                          });
-                          setPendingItems(prev => prev.filter(p => p.item_name !== item.item_name));
-                          fetchData();
-                        }} className="bg-slate-100 hover:bg-indigo-600 hover:text-white px-5 py-2 rounded-xl font-bold transition-all pointer-events-auto">
-                          {opt}
-                        </button>
-                      ))}
-                      <button onClick={() => setPendingItems(prev => prev.filter(p => p.item_name !== item.item_name))} className="text-slate-400 text-xs px-2 pointer-events-auto">התעלם</button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
           </div>
         )}
 
@@ -185,19 +191,39 @@ export default function HomePage() {
               ))}
             </div>
             <div className="grid gap-3">
-              {inventory.filter(i => invFilter === 'הכל' || i.location === invFilter).map(item => (
+              {filteredInventory.filter(i => invFilter === 'הכל' || i.location === invFilter).map(item => (
                 <div key={item.id} className="flex justify-between items-center bg-white p-5 rounded-3xl shadow-sm border border-slate-100">
-                  <div className="text-right">
-                    <span className="block font-bold text-lg">{item.item_name}</span>
+                  <div className="text-right flex-1">
+                    {/* עריכת שם פריט */}
+                    {editingId === item.id ? (
+                      <div className="flex items-center gap-2 mb-1">
+                        <input 
+                          autoFocus 
+                          value={editNameValue} 
+                          onChange={(e) => setEditNameValue(e.target.value)} 
+                          className="border-b-2 border-indigo-500 bg-indigo-50 px-2 py-1 outline-none font-bold text-lg w-full max-w-[150px] pointer-events-auto"
+                        />
+                        <button onClick={() => saveEditedName(item.id!, 'inventory_items')} className="bg-green-100 text-green-700 p-2 rounded-lg pointer-events-auto">✅</button>
+                        <button onClick={() => setEditingId(null)} className="bg-red-100 text-red-700 p-2 rounded-lg pointer-events-auto">❌</button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <span className="block font-bold text-lg text-slate-800">{item.item_name}</span>
+                        <button onClick={() => {setEditingId(item.id!); setEditNameValue(item.item_name);}} className="text-slate-300 hover:text-indigo-500 pointer-events-auto">✏️</button>
+                      </div>
+                    )}
                     <span className="text-[10px] uppercase font-bold text-slate-400">{item.category} • {item.location}</span>
                   </div>
                   <div className="flex items-center gap-3">
-                    <button onClick={() => saveItem({...item, quantity: 0.5}, 'remove')} className="w-10 h-10 rounded-full bg-slate-50 text-red-500 font-bold pointer-events-auto">-</button>
-                    <span className={`text-2xl font-black w-10 text-center ${item.quantity <= 2 ? 'text-red-500' : 'text-indigo-600'}`}>{item.quantity}</span>
-                    <button onClick={() => saveItem({...item, quantity: 0.5}, 'add')} className="w-10 h-10 rounded-full bg-slate-50 text-green-500 font-bold pointer-events-auto">+</button>
+                    <button onClick={() => saveItem({...item, quantity: 0.5}, 'remove')} className="w-10 h-10 rounded-full bg-slate-50 hover:bg-red-50 text-red-500 font-bold pointer-events-auto transition-colors">-</button>
+                    <span className={`text-2xl font-black min-w-[40px] text-center ${item.quantity <= 2 ? 'text-red-500' : 'text-indigo-600'}`}>{item.quantity}</span>
+                    <button onClick={() => saveItem({...item, quantity: 0.5}, 'add')} className="w-10 h-10 rounded-full bg-slate-50 hover:bg-green-50 text-green-500 font-bold pointer-events-auto transition-colors">+</button>
                   </div>
                 </div>
               ))}
+              {filteredInventory.length === 0 && searchTerm && (
+                <div className="text-center p-8 text-slate-400 font-bold">לא נמצאו מוצרים תואמים לחיפוש 🧐</div>
+              )}
             </div>
           </section>
         )}
@@ -206,20 +232,43 @@ export default function HomePage() {
         {activeView === 'SHOPPING' && (
           <section className="space-y-6">
             {categories.map(cat => {
-              const list = shoppingList.filter(s => s.category === cat);
+              const list = filteredShoppingList.filter(s => s.category === cat);
               if (list.length === 0) return null;
               return (
                 <div key={cat} className="space-y-2">
                   <h3 className="font-black text-slate-400 text-xs uppercase pr-2">{cat}</h3>
                   {list.map(s => (
-                    <div key={s.id} className="flex items-center gap-4 bg-white p-5 rounded-2xl shadow-sm border border-emerald-50">
-                      <input type="checkbox" onChange={() => markAsBought(s)} className="w-7 h-7 rounded-full border-2 border-emerald-200 text-emerald-600 pointer-events-auto" />
-                      <span className="font-bold text-slate-700">{s.item_name}</span>
+                    <div key={s.id} className="flex justify-between items-center gap-4 bg-white p-5 rounded-2xl shadow-sm border border-emerald-50">
+                      <div className="flex items-center gap-4 flex-1">
+                        <input type="checkbox" onChange={() => markAsBought(s)} className="w-7 h-7 rounded-full border-2 border-emerald-200 text-emerald-600 pointer-events-auto cursor-pointer" />
+                        
+                        {/* עריכת שם פריט בקניות */}
+                        {editingId === s.id ? (
+                          <div className="flex items-center gap-2">
+                            <input 
+                              autoFocus 
+                              value={editNameValue} 
+                              onChange={(e) => setEditNameValue(e.target.value)} 
+                              className="border-b-2 border-emerald-500 bg-emerald-50 px-2 py-1 outline-none font-bold text-lg w-full max-w-[150px] pointer-events-auto"
+                            />
+                            <button onClick={() => saveEditedName(s.id!, 'shopping_list')} className="bg-green-100 text-green-700 p-2 rounded-lg pointer-events-auto">✅</button>
+                            <button onClick={() => setEditingId(null)} className="bg-red-100 text-red-700 p-2 rounded-lg pointer-events-auto">❌</button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-slate-700 text-lg">{s.item_name}</span>
+                            <button onClick={() => {setEditingId(s.id!); setEditNameValue(s.item_name);}} className="text-slate-300 hover:text-emerald-500 pointer-events-auto">✏️</button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
               );
             })}
+            {filteredShoppingList.length === 0 && searchTerm && (
+              <div className="text-center p-8 text-slate-400 font-bold">לא נמצאו מוצרים תואמים לחיפוש 🧐</div>
+            )}
           </section>
         )}
       </div>
