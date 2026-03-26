@@ -18,6 +18,7 @@ export default function HomePage() {
   const [status, setStatus] = useState('');
   const [pendingItems, setPendingItems] = useState<Item[]>([]);
   const [lowStockAlerts, setLowStockAlerts] = useState<Item[]>([]);
+  const [removedItems, setRemovedItems] = useState<any[]>([]); // רשימת "הוסרו לאחרונה"
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState('');
@@ -41,10 +42,13 @@ export default function HomePage() {
     fetchData();
   };
 
-  // עדכון כמות מדויקת מכפתורי ה-UI
   const updateExactQuantity = async (item: Item, newQty: number) => {
     await supabase.from('inventory_items').update({ quantity: newQty }).eq('id', item.id);
-    if (newQty <= 2 && newQty < item.quantity) {
+    
+    // בדיקה: האם המוצר כבר קיים ברשימת הקניות?
+    const alreadyInShopping = shoppingList.some(s => s.item_name === item.item_name);
+    
+    if (newQty <= 2 && newQty < item.quantity && !alreadyInShopping) {
       setLowStockAlerts(prev => [...prev.filter(i => i.item_name !== item.item_name), { ...item, quantity: newQty }]);
     }
     fetchData();
@@ -69,7 +73,11 @@ export default function HomePage() {
     } else {
       await supabase.from('inventory_items').insert([{ item_name: name, quantity: item.quantity, category: item.category || 'כללי', location: item.location || 'מזווה', household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72' }]);
     }
-    if (newQty <= 2 && newQty > 0) setLowStockAlerts(prev => [...prev.filter(i => i.item_name !== name), { ...item, item_name: name, quantity: newQty }]);
+
+    const alreadyInShopping = shoppingList.some(s => s.item_name === name);
+    if (newQty <= 2 && newQty > 0 && !alreadyInShopping) {
+      setLowStockAlerts(prev => [...prev.filter(i => i.item_name !== name), { ...item, item_name: name, quantity: newQty }]);
+    }
   };
 
   const handleUpdate = async (e: React.FormEvent) => {
@@ -81,7 +89,6 @@ export default function HomePage() {
       const data = await res.json();
       const items = data.items || [];
 
-      // אם אנחנו במסך הקניות - הכל הולך ישירות לקניות
       if (activeView === 'SHOPPING') {
         for (const item of items) {
           const name = item.name || item.item_name;
@@ -89,9 +96,7 @@ export default function HomePage() {
           await supabase.from('shopping_list').insert([{ item_name: finalName, category: item.category || 'כללי' }]);
         }
         setStatus('✅ נוסף לרשימת הקניות!');
-      } 
-      // אם אנחנו במסך המלאי - ממשיכים עם הלוגיקה הרגילה (סיווג וכו')
-      else {
+      } else {
         const certain = items.filter((i: any) => !i.uncertain);
         const uncertain = items.filter((i: any) => i.uncertain && (i.name || i.item_name));
         for (const item of certain) { await saveItemAI(item, data.action); }
@@ -114,9 +119,17 @@ export default function HomePage() {
     fetchData();
   };
 
-  const markAsBought = async (shopItem: any) => {
-    await saveItemAI({ item_name: shopItem.item_name, quantity: 1, category: shopItem.category, location: 'מקרר' }, 'add');
+  // מחיקת פריט מרשימת הקניות והעברתו ל"הוסרו לאחרונה"
+  const handleRemoveFromShopping = async (shopItem: any) => {
+    setRemovedItems(prev => [...prev, shopItem]);
     await supabase.from('shopping_list').delete().eq('id', shopItem.id);
+    fetchData();
+  };
+
+  // שחזור פריט מ"הוסרו לאחרונה" חזרה לרשימה
+  const handleRestoreToShopping = async (shopItem: any) => {
+    setRemovedItems(prev => prev.filter(i => i.id !== shopItem.id));
+    await supabase.from('shopping_list').insert([{ item_name: shopItem.item_name, category: shopItem.category }]);
     fetchData();
   };
 
@@ -124,7 +137,6 @@ export default function HomePage() {
   const filteredShoppingList = shoppingList.filter(s => s.item_name.includes(searchTerm)).sort((a, b) => a.item_name.localeCompare(b.item_name, 'he'));
   const displayCategories = Array.from(new Set([...categories, ...inventory.map(i => i.category), ...shoppingList.map(s => s.category)]));
 
-  // צבעי ההדר משתנים לפי המסך
   const headerGradient = activeView === 'HOME' ? 'from-violet-600 via-fuchsia-600 to-orange-500' :
                          activeView === 'INVENTORY' ? 'from-teal-600 to-emerald-500' :
                          'from-rose-500 to-orange-500';
@@ -143,7 +155,6 @@ export default function HomePage() {
 
       <div className="max-w-2xl mx-auto p-4 relative z-10">
         
-        {/* HOME */}
         {activeView === 'HOME' && (
           <div className="grid grid-cols-1 gap-6 mt-10">
             <button onClick={() => setActiveView('INVENTORY')} className="p-8 bg-white rounded-[2.5rem] shadow-xl border-b-[8px] border-teal-500 flex items-center justify-between group active:scale-95 transition-all">
@@ -163,7 +174,6 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* פאנל חיפוש וסידור */}
         {activeView !== 'HOME' && (
           <div className="mb-6 space-y-4">
             <input type="text" placeholder="🔍 חפש מוצר..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-md shadow-sm focus:ring-2 focus:ring-amber-400 pointer-events-auto" />
@@ -174,7 +184,6 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* טופס AI */}
         {activeView !== 'HOME' && (
           <div className="mb-6 bg-white p-5 rounded-[2rem] shadow-xl border border-slate-100">
             <form onSubmit={handleUpdate} className="space-y-3">
@@ -187,7 +196,6 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* התראות מלאי */}
         {lowStockAlerts.length > 0 && activeView === 'INVENTORY' && (
           <div className="mb-6 space-y-3">
             {lowStockAlerts.map(alert => (
@@ -202,7 +210,6 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* שאלות סיווג (רק במלאי) */}
         {pendingItems.length > 0 && activeView === 'INVENTORY' && (
           <div className="mb-8 p-6 bg-amber-50 rounded-[2rem] border-2 border-amber-300 shadow-md">
             <h3 className="font-black text-amber-900 mb-4">🤔 שאלות סיווג:</h3>
@@ -262,7 +269,6 @@ export default function HomePage() {
                 ))}
               </div>
             )}
-            {filteredInventory.length === 0 && <div className="text-center p-8 text-slate-400 font-bold">לא נמצאו פריטים 🧐</div>}
           </section>
         )}
 
@@ -279,7 +285,7 @@ export default function HomePage() {
                       <h3 className="font-black text-rose-700 text-sm uppercase pr-2 border-r-4 border-rose-400">{cat}</h3>
                       <div className="grid gap-3">
                         {list.map(s => (
-                          <ShoppingCard key={s.id} item={s} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} markAsBought={markAsBought} />
+                          <ShoppingCard key={s.id} item={s} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} onRemove={handleRemoveFromShopping} />
                         ))}
                       </div>
                     </div>
@@ -289,11 +295,29 @@ export default function HomePage() {
             ) : (
               <div className="grid gap-3">
                 {filteredShoppingList.map(s => (
-                  <ShoppingCard key={s.id} item={s} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} markAsBought={markAsBought} />
+                  <ShoppingCard key={s.id} item={s} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} onRemove={handleRemoveFromShopping} />
                 ))}
               </div>
             )}
+            
             {filteredShoppingList.length === 0 && <div className="text-center p-8 text-slate-400 font-bold">העגלה ריקה 🛒</div>}
+
+            {/* "פח מחזור" למחיקות אחרונות */}
+            {removedItems.length > 0 && (
+              <div className="mt-12 pt-8 border-t-2 border-slate-200">
+                <h3 className="font-black text-slate-400 text-sm uppercase mb-4 pr-2">🗑️ הוסרו לאחרונה:</h3>
+                <div className="grid gap-2 opacity-80">
+                  {removedItems.map((item, idx) => (
+                    <div key={idx} className="flex justify-between items-center bg-slate-100 p-3 rounded-xl">
+                      <span className="line-through text-slate-500 font-medium">{item.item_name}</span>
+                      <button onClick={() => handleRestoreToShopping(item)} className="text-xs bg-white text-slate-600 px-3 py-1.5 rounded-lg border border-slate-300 font-bold shadow-sm hover:bg-slate-50 pointer-events-auto">
+                        הוסף חזרה +
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </section>
         )}
       </div>
@@ -329,22 +353,26 @@ function InventoryCard({ item, editingId, editNameValue, setEditingId, setEditNa
   );
 }
 
-// כרטיס קניות
-function ShoppingCard({ item, editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName, markAsBought }: any) {
+// כרטיס קניות (עכשיו עם כפתור "הסר")
+function ShoppingCard({ item, editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName, onRemove }: any) {
   return (
-    <div className="flex items-center gap-4 bg-white p-4 rounded-[1.5rem] shadow-sm border border-rose-50">
-      <input type="checkbox" onChange={() => markAsBought(item)} className="w-7 h-7 rounded-lg border-2 border-rose-300 text-rose-500 pointer-events-auto cursor-pointer" />
-      {editingId === item.id ? (
-        <div className="flex items-center gap-2">
-          <input autoFocus value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} className="border-b-2 border-rose-500 bg-rose-50 px-2 py-1 outline-none font-bold text-lg w-[120px] pointer-events-auto" />
-          <button onClick={() => saveEditedName(item.id, 'shopping_list')} className="bg-green-100 text-green-700 p-2 rounded-lg pointer-events-auto">✅</button>
-        </div>
-      ) : (
-        <div className="flex items-center gap-2">
-          <span className="font-bold text-slate-800 text-lg">{item.item_name}</span>
-          <button onClick={() => {setEditingId(item.id); setEditNameValue(item.item_name);}} className="text-slate-300 hover:text-amber-500 pointer-events-auto">✏️</button>
-        </div>
-      )}
+    <div className="flex justify-between items-center gap-4 bg-white p-4 rounded-[1.5rem] shadow-sm border border-rose-50 hover:border-rose-100 transition-colors">
+      <div className="flex items-center gap-3 flex-1">
+        <button onClick={() => onRemove(item)} className="bg-rose-100 text-rose-600 hover:bg-rose-200 px-4 py-2 rounded-xl text-sm font-bold shadow-sm pointer-events-auto transition-colors">
+          הסר
+        </button>
+        {editingId === item.id ? (
+          <div className="flex items-center gap-2">
+            <input autoFocus value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} className="border-b-2 border-rose-500 bg-rose-50 px-2 py-1 outline-none font-bold text-lg w-[120px] pointer-events-auto" />
+            <button onClick={() => saveEditedName(item.id, 'shopping_list')} className="bg-green-100 text-green-700 p-2 rounded-lg pointer-events-auto">✅</button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-slate-800 text-lg">{item.item_name}</span>
+            <button onClick={() => {setEditingId(item.id); setEditNameValue(item.item_name);}} className="text-slate-300 hover:text-amber-500 pointer-events-auto">✏️</button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
