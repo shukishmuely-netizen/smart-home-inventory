@@ -43,7 +43,6 @@ export default function HomePage() {
   };
 
   const fetchData = async () => {
-    // קורא מהטבלאות האמיתיות והמקדימות שלנו!
     const { data: inv } = await supabase.from('inventory_items').select('*');
     const { data: shop } = await supabase.from('shopping_list').select('*');
     const { data: cats } = await supabase.from('category_order').select('category_name').order('sort_order');
@@ -83,14 +82,18 @@ export default function HomePage() {
     updateExactQuantity(item, newQty);
   };
 
-  const saveItemAI = async (item: Item, action: 'add' | 'remove' = 'add') => {
+  const saveItemAI = async (item: Item) => {
     const name = item.item_name || (item as any).name;
-    const existing = inventory.find(i => i.item_name === name);
-    let newQty = item.quantity; // בגרסת ה-API החדשה הכמות מגיעה שלילית אם צריך להוריד
+    // מחפש התאמה חכמה - קודם בודק אם יש התאמה גם לשם וגם לקטגוריה
+    let existing = inventory.find(i => i.item_name === name && i.category === item.category);
+    // אם לא מצא התאמה כפולה, מחפש רק לפי השם
+    if (!existing) existing = inventory.find(i => i.item_name === name);
+    
+    let newQty = item.quantity;
     
     if (existing) {
-      newQty = Math.max(0, existing.quantity + item.quantity); // מחבר גם כמות שלילית
-      setInventory(prev => prev.map(i => i.item_name === name ? { ...i, quantity: newQty } : i));
+      newQty = Math.max(0, existing.quantity + item.quantity); // מחבר את הכמות (שתהיה שלילית אם זו הסרה)
+      setInventory(prev => prev.map(i => i.id === existing!.id ? { ...i, quantity: newQty } : i));
       await supabase.from('inventory_items').update({ quantity: newQty }).eq('id', existing.id);
     } else {
       const newItem = { item_name: name, quantity: Math.max(0, item.quantity), category: item.category || 'כללי', location: item.location || 'מזווה', household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72' };
@@ -107,17 +110,60 @@ export default function HomePage() {
     try {
       const res = await fetch('/api/parse', { method: 'POST', body: JSON.stringify({ text: input }) });
       const data = await res.json();
+      const items = data.items || [];
+
       if (activeView === 'SHOPPING') {
-        for (const item of data.items) {
+        for (const item of items) {
            const finalName = item.quantity > 1 ? `${item.name} (${item.quantity})` : item.name;
            await supabase.from('shopping_list').insert([{ item_name: finalName, category: item.category || 'כללי' }]);
         }
         showStatus('✅ נוסף לקניות!', true);
       } else {
-        for (const item of data.items.filter((i: any) => !i.uncertain)) await saveItemAI(item, data.action);
-        const uncertain = data.items.filter((i: any) => i.uncertain && (i.name || i.item_name));
-        if (uncertain.length > 0) {
-          setPendingItems(uncertain.map((i: any) => ({ ...i, item_name: i.name || i.item_name })));
+        const certainItems = [];
+        const uncertainItems = [];
+
+        for (const item of items) {
+          const name = item.name || item.item_name;
+          const isRemoval = item.quantity < 0; // ה-AI עכשיו שולח מספר שלילי בהורדה
+
+          // רזולוציה חכמה (Smart Resolution) להורדת פריטים
+          if (item.uncertain && isRemoval) {
+            const matches = inventory.filter(i => i.item_name === name || i.item_name.includes(name));
+            
+            if (matches.length === 1) {
+              // יש רק סוג אחד במלאי - אין צורך לשאול! מורידים ממנו ישירות
+              certainItems.push({
+                ...item,
+                uncertain: false,
+                item_name: matches[0].item_name,
+                name: matches[0].item_name,
+                category: matches[0].category,
+                location: matches[0].location
+              });
+            } else if (matches.length > 1) {
+              // יש יותר מסוג אחד במלאי (למשל גם שימורים וגם קפוא) - נשאל את המשתמש
+              uncertainItems.push({
+                ...item,
+                options: Array.from(new Set(matches.map(m => m.category))) // נציג לו רק את האופציות שקיימות לו במלאי
+              });
+            } else {
+              // מנסה להוריד משהו שלא קיים במלאי בכלל? נכניס כרגיל וזה פשוט יתאפס ל-0
+              certainItems.push({ ...item, uncertain: false });
+            }
+          } else if (item.uncertain) {
+            // הוספה של פריט חדש לא ברור למלאי - תמיד נשאל לסיווג
+            uncertainItems.push(item);
+          } else {
+            certainItems.push(item);
+          }
+        }
+
+        // שמירת כל הפריטים הברורים (כולל אלו שהמערכת פתרה לבד)
+        for (const item of certainItems) await saveItemAI(item);
+        
+        // הצגת אלו שעדיין דורשים סיווג
+        if (uncertainItems.length > 0) {
+          setPendingItems(uncertainItems.map((i: any) => ({ ...i, item_name: i.name || i.item_name })));
           showStatus(`🤔 נדרש סיווג`, false); 
         } else {
           showStatus('✅ עודכן!', true);
@@ -194,7 +240,6 @@ export default function HomePage() {
             <h1 className="text-2xl font-black cursor-pointer drop-shadow-md" onClick={() => changeView('HOME')}>הבית של ניאו 🏠</h1>
             
             <div className="flex items-center gap-2">
-              {/* החיפוש במיקום החדש (ליד הרענון) */}
               {activeView !== 'HOME' && (
                 <button onClick={() => setIsSearchOpen(!isSearchOpen)} className="p-2 rounded-xl bg-black/10 hover:bg-black/20 font-black flex items-center justify-center text-lg" title="חפש">🔍</button>
               )}
