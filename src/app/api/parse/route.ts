@@ -6,30 +6,25 @@ export async function POST(request: NextRequest) {
     const { text } = await request.json();
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
-    const prompt = `You are a kitchen inventory manager. Parse this list: "${text}"
-    
-    QUANTITY RULES:
-    - "חצי" = 0.5, "רבע" = 0.25
-    - "מלא" = 10, "קצת" = 1, "0" = 0
-    - If multiple types/sizes mentioned, SUM them.
-    - If no quantity, assume 1.
+    // Explicit prompt to improve intent classification and handle summing of identical items.
+    const prompt = `You are a kitchen inventory parsing expert. Analyze this list: "${text}"
 
-    CATEGORIES: ["פירות וירקות", "קירור", "קפואים", "טרי", "יבשים", "שימורים", "רטבים/תבלינים", "ניקיון"]
-    LOCATIONS: ["מקרר", "מזווה"]
+    CRITICAL INTENT RULES (FIXED):
+    - Identify if the user's primary intent is adding items to inventory OR removing items from inventory.
+    - If words imply addition (הוסף, קניתי, +, קנינו, הוספנו), intent is "add". Quantities are positive.
+    - If words imply removal (תוריד, נגמר, -, הורדתי, סיימנו), intent is "remove".
+    - IF INTENT IS "REMOVE", QUANTITIES MUST BE NEGATIVE by multiplying them by -1. For example, "Remove 1 corn" must be interpreted as adding -1 quantity of corn.
 
-    AMBIGUITY: If an item can be in multiple states (e.g. Corn, Peas, Chicken, Meat, Beans) and the state is NOT specified, mark "uncertain": true.
-    CRITICAL: If "uncertain" is true, YOU MUST ALWAYS provide these exact options in the options array: ["טרי", "קפואים", "שימורים", "יבשים"].
+    SUMMING RULES:
+    - If multiple entries for the exact same item name are mentioned, you MUST SUM their quantities. For example, if the input is "Remove 1 corn, and remove another 2 corn," the final corn quantity is -1 + -2 = -3. You must return ONE entry for "corn" with quantity -3.
 
-    Format: {
-      "items": [{
-        "name": string, 
-        "quantity": number, 
-        "category": string, 
-        "location": string, 
-        "uncertain": boolean,
-        "options": string[]
-      }]
-    }`;
+    FORMAT RULES:
+    - CATEGORIES: ["טרי", "קפואים", "שימורים", "יבשים", "רטבים/תבלינים", "ניקיון", "אחר"]
+    - LOCATIONS: ["מקרר", "מזווה"]
+    - If unclear state, set "uncertain": true and generate options: ["טרי", "קפואים", "שימורים", "יבשים"].
+    - Sum quantities as described above. Item names are required.
+
+    Format: { "items": [{ "name": string, "quantity": number, "category": string, "location": string, "uncertain": boolean, "options": string[] }] }`;
 
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
@@ -38,7 +33,12 @@ export async function POST(request: NextRequest) {
       temperature: 0,
     });
 
-    return NextResponse.json(JSON.parse(response.choices[0].message.content || '{"items":[]}'));
+    const parsedData = JSON.parse(response.choices[0].message.content || '{"items":[]}');
+    
+    // Debug logging in Vercel to see the actual AI output.
+    console.log("AI Parsed Data for intent logic debug:", parsedData);
+
+    return NextResponse.json(parsedData);
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
