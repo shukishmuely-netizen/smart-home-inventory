@@ -7,33 +7,25 @@ type Task = { id?: string; title: string; description?: string; urgency: string;
 
 export default function HomePage() {
   const today = new Date().toISOString().split('T')[0];
-
   const [activeView, setActiveView] = useState<'HOME' | 'INVENTORY' | 'SHOPPING' | 'TASKS'>('HOME');
   const [invFilter, setInvFilter] = useState<'מקרר' | 'מזווה' | 'הכל'>('הכל');
   const [sortBy, setSortBy] = useState<'name' | 'category'>('name');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false); 
-  
   const [inventory, setInventory] = useState<Item[]>([]);
   const [shoppingList, setShoppingList] = useState<any[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
-  
   const [input, setInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [status, setStatus] = useState('');
   const [pendingItems, setPendingItems] = useState<Item[]>([]);
   const [lowStockAlerts, setLowStockAlerts] = useState<Item[]>([]);
   const [removedItems, setRemovedItems] = useState<any[]>([]);
-
-  const [newTask, setNewTask] = useState<Task>({ 
-    title: '', description: '', urgency: 'סטנדרטית', assignee: '👫 כולם', target_date: today, status: 'לא התחלתי' 
-  });
+  const [newTask, setNewTask] = useState<Task>({ title: '', description: '', urgency: 'סטנדרטית', assignee: '👫 כולם', target_date: today, status: 'לא התחלתי' });
   const [showTaskForm, setShowTaskForm] = useState(false);
-
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState('');
-
   const statusTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const showStatus = (msg: string, autoClear: boolean = false) => {
@@ -47,7 +39,6 @@ export default function HomePage() {
     const { data: shop } = await supabase.from('shopping_list').select('*');
     const { data: cats } = await supabase.from('category_order').select('category_name').order('sort_order');
     const { data: tsk } = await supabase.from('tasks').select('*').order('created_at', { ascending: false });
-    
     if (inv) setInventory(inv);
     if (shop) setShoppingList(shop);
     if (cats) setCategories(cats.map(c => c.category_name));
@@ -59,16 +50,12 @@ export default function HomePage() {
   const handleRefresh = () => window.location.reload();
 
   const changeView = (view: typeof activeView) => {
-    setActiveView(view);
-    setIsMenuOpen(false);
-    setIsSearchOpen(false);
-    setSearchTerm('');
+    setActiveView(view); setIsMenuOpen(false); setIsSearchOpen(false); setSearchTerm('');
   };
 
   const updateExactQuantity = (item: Item, newQty: number) => {
     setInventory(prev => prev.map(i => i.id === item.id ? { ...i, quantity: newQty } : i));
     supabase.from('inventory_items').update({ quantity: newQty }).eq('id', item.id).then();
-    
     const alreadyInShopping = shoppingList.some(s => s.item_name === item.item_name);
     if (newQty <= 2 && newQty < item.quantity && !alreadyInShopping) {
       setLowStockAlerts(prev => [...prev.filter(i => i.item_name !== item.item_name), { ...item, quantity: newQty }]);
@@ -84,12 +71,12 @@ export default function HomePage() {
 
   const saveItemAI = async (item: Item, action: 'add' | 'remove' = 'add') => {
     const name = item.item_name || (item as any).name;
-    const existing = inventory.find(i => i.item_name === name);
+    let existing = inventory.find(i => i.item_name === name && i.category === item.category);
+    if (!existing) existing = inventory.find(i => i.item_name === name);
     let newQty = item.quantity; 
-    
     if (existing) {
       newQty = Math.max(0, existing.quantity + item.quantity); 
-      setInventory(prev => prev.map(i => i.item_name === name ? { ...i, quantity: newQty } : i));
+      setInventory(prev => prev.map(i => i.id === existing!.id ? { ...i, quantity: newQty } : i));
       await supabase.from('inventory_items').update({ quantity: newQty }).eq('id', existing.id);
     } else {
       const newItem = { item_name: name, quantity: Math.max(0, item.quantity), category: item.category || 'כללי', location: item.location || 'מזווה', household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72' };
@@ -106,8 +93,9 @@ export default function HomePage() {
     try {
       const res = await fetch('/api/parse', { method: 'POST', body: JSON.stringify({ text: input }) });
       const data = await res.json();
+      const items = data.items || [];
       if (activeView === 'SHOPPING') {
-        for (const item of data.items) {
+        for (const item of items) {
            const finalName = item.quantity > 1 ? `${item.name} (${item.quantity})` : item.name;
            await supabase.from('shopping_list').insert([{ item_name: finalName, category: item.category || 'כללי' }]);
         }
@@ -115,35 +103,22 @@ export default function HomePage() {
       } else {
         const certainItems = [];
         const uncertainItems = [];
-
-        for (const item of data.items) {
+        for (const item of items) {
           const name = item.name || item.item_name;
           const isRemoval = item.quantity < 0; 
-
           if (item.uncertain && isRemoval) {
             const matches = inventory.filter(i => i.item_name === name || i.item_name.includes(name));
-            if (matches.length === 1) {
-              certainItems.push({ ...item, uncertain: false, item_name: matches[0].item_name, name: matches[0].item_name, category: matches[0].category, location: matches[0].location });
-            } else if (matches.length > 1) {
-              uncertainItems.push({ ...item, options: Array.from(new Set(matches.map(m => m.category))) });
-            } else {
-              certainItems.push({ ...item, uncertain: false });
-            }
-          } else if (item.uncertain) {
-            uncertainItems.push(item);
-          } else {
-            certainItems.push(item);
-          }
+            if (matches.length === 1) certainItems.push({ ...item, uncertain: false, item_name: matches[0].item_name, name: matches[0].item_name, category: matches[0].category, location: matches[0].location });
+            else if (matches.length > 1) uncertainItems.push({ ...item, options: Array.from(new Set(matches.map(m => m.category))) });
+            else certainItems.push({ ...item, uncertain: false });
+          } else if (item.uncertain) uncertainItems.push(item);
+          else certainItems.push(item);
         }
-
         for (const item of certainItems) await saveItemAI(item);
-        
         if (uncertainItems.length > 0) {
           setPendingItems(uncertainItems.map((i: any) => ({ ...i, item_name: i.name || i.item_name })));
           showStatus(`🤔 נדרש סיווג`, false); 
-        } else {
-          showStatus('✅ עודכן!', true);
-        }
+        } else showStatus('✅ עודכן!', true);
       }
       setInput(''); fetchData();
     } catch { showStatus('❌ שגיאה', true); }
@@ -152,8 +127,7 @@ export default function HomePage() {
   const addToShopping = async (item: Item) => {
     await supabase.from('shopping_list').insert([{ item_name: item.item_name, category: item.category || 'כללי' }]);
     setLowStockAlerts(prev => prev.filter(i => i.item_name !== item.item_name));
-    showStatus('✅ נוסף לקניות', true);
-    fetchData();
+    showStatus('✅ נוסף לקניות', true); fetchData();
   };
 
   const handleRemoveFromShopping = async (shopItem: any) => {
@@ -170,8 +144,7 @@ export default function HomePage() {
 
   const saveEditedName = async (id: string, table: any) => {
     if (editNameValue.trim()) await supabase.from(table).update({ item_name: editNameValue.trim() }).eq('id', id);
-    setEditingId(null);
-    fetchData();
+    setEditingId(null); fetchData();
   };
 
   const handleAddTask = async (e: React.FormEvent) => {
@@ -180,9 +153,7 @@ export default function HomePage() {
     const { error } = await supabase.from('tasks').insert([newTask]);
     if (!error) {
       setNewTask({ title: '', description: '', urgency: 'סטנדרטית', assignee: '👫 כולם', target_date: today, status: 'לא התחלתי' });
-      setShowTaskForm(false);
-      showStatus('✅ המשימה נוספה!', true);
-      fetchData();
+      setShowTaskForm(false); showStatus('✅ המשימה נוספה!', true); fetchData();
     }
   };
 
@@ -207,30 +178,23 @@ export default function HomePage() {
   const filteredShoppingList = shoppingList.filter(s => s.item_name.includes(searchTerm)).sort((a, b) => a.item_name.localeCompare(b.item_name, 'he'));
   const displayCategories = Array.from(new Set([...categories, ...inventory.map(i => i.category), ...shoppingList.map(s => s.category)]));
 
-  const headerGradient = activeView === 'HOME' ? 'from-violet-600 via-fuchsia-600 to-orange-500' :
-                         activeView === 'INVENTORY' ? 'from-teal-600 to-emerald-500' :
-                         activeView === 'SHOPPING' ? 'from-rose-500 to-orange-500' : 'from-indigo-600 to-purple-700';
+  const headerGradient = activeView === 'HOME' ? 'from-violet-600 via-fuchsia-600 to-orange-500' : activeView === 'INVENTORY' ? 'from-teal-600 to-emerald-500' : activeView === 'SHOPPING' ? 'from-rose-500 to-orange-500' : 'from-indigo-600 to-purple-700';
 
   return (
     <main className="min-h-screen bg-slate-50 font-sans pb-20 text-slate-900" dir="rtl">
-      
       <header className={`bg-gradient-to-r ${headerGradient} text-white shadow-xl sticky top-0 z-[1000] transition-colors duration-500`}>
         <div className="max-w-2xl mx-auto p-4 flex flex-col gap-3">
-          
           <div className="flex justify-between items-center relative">
             <h1 className="text-2xl font-black cursor-pointer drop-shadow-md" onClick={() => changeView('HOME')}>הבית של ניאו 🏠</h1>
-            
             <div className="flex items-center gap-2">
               {activeView !== 'HOME' && (
                 <button onClick={() => setIsSearchOpen(!isSearchOpen)} className="p-2 rounded-xl bg-black/10 hover:bg-black/20 font-black flex items-center justify-center text-lg" title="חפש">🔍</button>
               )}
               <button onClick={handleRefresh} className="p-2 rounded-xl bg-black/10 hover:bg-black/20 font-black flex items-center justify-center text-lg" title="רענן עמוד">🔄</button>
-              
               <div className="relative">
                 <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="px-3 py-2 rounded-xl bg-black/20 hover:bg-black/30 font-bold tracking-wide shadow-inner flex items-center gap-2">
                   <span>☰</span> תפריט
                 </button>
-                
                 {isMenuOpen && (
                   <div className="absolute left-0 top-12 w-48 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col text-slate-800 z-[1001] animate-in fade-in slide-in-from-top-2">
                     <button className="p-4 text-right font-black hover:bg-teal-50 border-b flex justify-between" onClick={() => changeView('INVENTORY')}><span>מלאי</span><span>📦</span></button>
@@ -241,17 +205,9 @@ export default function HomePage() {
               </div>
             </div>
           </div>
-
           {isSearchOpen && activeView !== 'HOME' && (
             <div className="relative w-full animate-in fade-in slide-in-from-top-2 mt-2">
-              <input 
-                type="text" 
-                placeholder={`חיפוש ${activeView === 'INVENTORY' ? 'במלאי' : activeView === 'SHOPPING' ? 'בקניות' : 'במשימות'}...`} 
-                value={searchTerm} 
-                onChange={(e) => setSearchTerm(e.target.value)} 
-                className="w-full p-3 rounded-xl bg-white/20 border border-white/30 text-white placeholder-white/80 focus:bg-white focus:text-slate-900 focus:placeholder-slate-400 outline-none transition-all shadow-inner font-medium"
-                autoFocus
-              />
+              <input type="text" placeholder={`חיפוש ${activeView === 'INVENTORY' ? 'במלאי' : activeView === 'SHOPPING' ? 'בקניות' : 'במשימות'}...`} value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full p-3 rounded-xl bg-white/20 border border-white/30 text-white placeholder-white/80 focus:bg-white focus:text-slate-900 focus:placeholder-slate-400 outline-none transition-all shadow-inner font-medium" autoFocus />
             </div>
           )}
         </div>
@@ -260,7 +216,6 @@ export default function HomePage() {
       {isMenuOpen && <div className="fixed inset-0 z-[999]" onClick={() => setIsMenuOpen(false)}></div>}
 
       <div className="max-w-2xl mx-auto p-4 relative z-10">
-        
         {activeView === 'HOME' && (
           <div className="grid grid-cols-1 gap-4 mt-6">
             <button onClick={() => changeView('INVENTORY')} className="p-6 bg-white rounded-[2rem] shadow-lg border-b-8 border-teal-500 flex items-center justify-between active:scale-95 transition-all">
@@ -408,7 +363,6 @@ export default function HomePage() {
                 ))}
               </div>
             )}
-            
             {removedItems.length > 0 && (
                <div className="mt-12 pt-8 border-t-2 border-slate-200">
                  <h3 className="font-black text-slate-400 text-[10px] uppercase mb-4 pr-2 tracking-widest">🗑️ הוסרו לאחרונה:</h3>
@@ -430,7 +384,6 @@ export default function HomePage() {
             <button onClick={() => setShowTaskForm(!showTaskForm)} className="w-full bg-purple-600 text-white p-4 rounded-2xl font-black shadow-lg active:scale-95 transition-all pointer-events-auto">
               {showTaskForm ? 'סגור טופס ✕' : '+ משימה חדשה'}
             </button>
-
             {showTaskForm && (
               <form onSubmit={handleAddTask} className="bg-white p-6 rounded-[2rem] shadow-xl border border-purple-100 space-y-4 animate-in fade-in slide-in-from-top-4 relative z-20">
                 <div className="space-y-1">
@@ -464,6 +417,111 @@ export default function HomePage() {
             )}
 
             <div className="space-y-4">
-              {/* משימות פעילות (לא הסתיימו) */}
               {tasks.filter(t => t.status !== 'סיימתי').map(task => {
-                const urgency
+                const urgencyColor = task.urgency === 'דחופה מאד' ? 'border-red-500 bg-red-50' : task.urgency === 'גבוהה' ? 'border-orange-400 bg-orange-50' : 'border-slate-200 bg-white';
+                const isPlural = task.assignee === '👫 כולם';
+                return (
+                  <div key={task.id} className={`p-5 rounded-[2rem] border-r-8 shadow-sm transition-all ${urgencyColor}`}>
+                    <div className="flex justify-between items-start mb-2">
+                      <h3 className="font-black text-lg text-slate-800">{task.title}</h3>
+                      <button onClick={() => deleteTask(task.id!)} className="text-slate-300 text-xs hover:text-red-400 pointer-events-auto">מחק</button>
+                    </div>
+                    {task.description && <p className="text-sm text-slate-500 mb-3">{task.description}</p>}
+                    <div className="flex flex-wrap gap-2 text-[10px] font-bold mb-4">
+                      <span className="bg-white/70 px-2 py-1 rounded-full border border-black/5 shadow-sm">👤 {task.assignee}</span>
+                      <span className="bg-white/70 px-2 py-1 rounded-full border border-black/5 shadow-sm">📅 {task.target_date || 'ללא תאריך'}</span>
+                      <span className="bg-white/70 px-2 py-1 rounded-full border border-black/5 shadow-sm">🔥 {task.urgency}</span>
+                    </div>
+                    <div className="flex bg-slate-200 p-1 rounded-xl mt-2">
+                      <button onClick={() => updateTaskStatus(task.id!, 'לא התחלתי')} className={`flex-1 py-2 rounded-lg text-[11px] font-black transition-all pointer-events-auto ${task.status === 'לא התחלתי' || !task.status ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>{isPlural ? 'לא התחלנו' : 'לא התחלתי'}</button>
+                      <button onClick={() => updateTaskStatus(task.id!, 'בתהליך')} className={`flex-1 py-2 rounded-lg text-[11px] font-black transition-all pointer-events-auto ${task.status === 'בתהליך' ? 'bg-blue-500 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>בתהליך</button>
+                      <button onClick={() => updateTaskStatus(task.id!, 'סיימתי')} className={`flex-1 py-2 rounded-lg text-[11px] font-black transition-all pointer-events-auto text-slate-500 hover:text-emerald-600`}>{isPlural ? 'סיימנו' : 'סיימתי'}</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {tasks.filter(t => t.status === 'סיימתי').length > 0 && (
+              <div className="mt-12 pt-8 border-t-2 border-slate-200">
+                <h3 className="font-black text-slate-400 text-sm uppercase mb-6 pr-2">✅ משימות שהסתיימו:</h3>
+                <div className="space-y-4 opacity-70">
+                  {tasks.filter(t => t.status === 'סיימתי').map(task => (
+                     <CompletedTaskCard key={task.id} task={task} onRestore={handleRestoreTask} onDelete={deleteTask} />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </main>
+  );
+}
+
+function CompletedTaskCard({ task, onRestore, onDelete }: any) {
+  const today = new Date().toISOString().split('T')[0];
+  const [newDate, setNewDate] = useState(today);
+  return (
+    <div className="bg-slate-100 p-5 rounded-[2rem] border border-slate-200 transition-opacity hover:opacity-100">
+      <div className="flex justify-between items-start mb-2">
+        <h3 className="font-black text-base line-through text-slate-500">{task.title}</h3>
+        <button onClick={() => onDelete(task.id!)} className="text-slate-400 text-xs hover:text-red-400 pointer-events-auto">מחק</button>
+      </div>
+      <div className="mt-4 pt-4 border-t border-slate-200">
+        <label className="block text-[10px] font-bold text-slate-500 mb-2">תאריך יעד חדש לשחזור:</label>
+        <div className="flex gap-2">
+          <input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} className="flex-1 p-2 rounded-xl text-xs font-bold bg-white border border-slate-200 pointer-events-auto" />
+          <button onClick={() => onRestore(task.id!, newDate)} className="bg-slate-300 text-slate-700 hover:bg-slate-400 px-4 py-2 rounded-xl text-xs font-black shadow-sm transition-colors pointer-events-auto">שחזר משימה ↺</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InventoryCard({ item, editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName, updateExactQuantity, onPlus, onHalf, onMinus }: any) {
+  return (
+    <div className="flex justify-between items-center bg-white p-4 rounded-[1.5rem] shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+      <div className="text-right flex-1">
+        {editingId === item.id ? (
+          <div className="flex items-center gap-2 mb-1">
+            <input autoFocus value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedName(item.id, 'inventory_items')} className="border-b-2 border-teal-500 bg-teal-50 px-2 py-1 outline-none font-bold text-lg w-[120px] pointer-events-auto" />
+            <button onClick={() => saveEditedName(item.id, 'inventory_items')} className="bg-green-100 text-green-700 p-2 rounded-lg pointer-events-auto shadow-sm">✅</button>
+          </div>
+        ) : (
+          <span onClick={() => {setEditingId(item.id); setEditNameValue(item.item_name);}} className="block font-bold text-lg text-slate-800 cursor-pointer hover:text-teal-600 hover:underline decoration-dashed decoration-slate-300 pointer-events-auto transition-colors" title="לחץ לעריכת השם">{item.item_name}</span>
+        )}
+        <span className="text-[10px] uppercase font-bold text-slate-400">{item.category} • {item.location}</span>
+      </div>
+      <div className="flex items-center gap-2" dir="ltr">
+        <button onClick={onHalf} className="w-8 h-8 rounded-full bg-amber-100 text-amber-600 font-bold text-xs pointer-events-auto shadow-sm hover:bg-amber-200 transition-colors active:scale-90">½</button>
+        <button onClick={onMinus} className="w-9 h-9 rounded-full bg-rose-100 text-rose-600 font-black pointer-events-auto shadow-sm hover:bg-rose-200 transition-colors active:scale-90">-</button>
+        <div className="relative flex items-center justify-center min-w-[36px]">
+          <select value={Math.floor(item.quantity)} onChange={(e) => updateExactQuantity(item, Number(e.target.value))} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer pointer-events-auto">
+            {[...Array(21).keys()].map(num => <option key={num} value={num}>{num}</option>)}
+          </select>
+          <span className={`text-xl font-black pointer-events-none ${item.quantity <= 2 ? 'text-rose-600' : 'text-slate-700'}`}>{item.quantity}</span>
+        </div>
+        <button onClick={onPlus} className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-600 font-black pointer-events-auto shadow-sm hover:bg-emerald-200 transition-colors active:scale-90">+</button>
+      </div>
+    </div>
+  );
+}
+
+function ShoppingCard({ item, editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName, onRemove }: any) {
+  return (
+    <div className="flex justify-between items-center gap-4 bg-white p-4 rounded-[1.5rem] shadow-sm border border-rose-50 hover:border-rose-100 transition-colors">
+      <div className="flex items-center gap-4 flex-1">
+        <button onClick={() => onRemove(item)} className="bg-rose-100 text-rose-600 hover:bg-rose-200 px-4 py-2 rounded-2xl text-xs font-black shadow-sm pointer-events-auto transition-colors">הסר</button>
+        {editingId === item.id ? (
+          <div className="flex items-center gap-2">
+            <input autoFocus value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedName(item.id, 'shopping_list')} className="border-b-2 border-rose-500 bg-rose-50 px-2 py-1 outline-none font-bold text-lg w-[140px] pointer-events-auto" />
+            <button onClick={() => saveEditedName(item.id, 'shopping_list')} className="bg-green-100 text-green-700 p-2 rounded-lg pointer-events-auto shadow-sm">✅</button>
+          </div>
+        ) : (
+          <span onClick={() => {setEditingId(item.id); setEditNameValue(item.item_name);}} className="font-bold text-slate-800 text-lg cursor-pointer hover:text-rose-600 hover:underline decoration-dashed decoration-slate-300 pointer-events-auto transition-colors" title="לחץ לעריכת השם">{item.item_name}</span>
+        )}
+      </div>
+    </div>
+  );
+}
