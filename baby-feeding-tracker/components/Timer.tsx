@@ -20,9 +20,7 @@ export default function Timer({ isRunning, startTime }: TimerProps) {
       setElapsed(0);
     }
     return () => {
-      if (intervalRef.current && typeof intervalRef.current !== "number") {
-          clearInterval(intervalRef.current);
-      }
+      if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, [isRunning, startTime]);
 
