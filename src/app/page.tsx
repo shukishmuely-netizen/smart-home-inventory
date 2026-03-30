@@ -87,30 +87,21 @@ export default function HomePage() {
     } catch { showStatus('שגיאה', true); }
   };
 
-  // ----- גרסת וואטסאפ נקייה לחלוטין -----
   const handleAddTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTask.title) return;
-    
     const { error } = await supabase.from('tasks').insert([newTask]);
-    
     if (!error) {
       const dateParts = newTask.target_date.split('-');
       const formattedDate = `${dateParts[2]}/${dateParts[1]}/${dateParts[0]}`;
-      
-      // בניית טקסט ללא שום אימוג'י או תווים מיוחדים
       let text = `משימה חדשה: ${newTask.title}\n`;
       if (newTask.description) text += `תיאור: ${newTask.description}\n`;
       text += `אחראי: ${newTask.assignee}\n`;
       text += `תאריך: ${formattedDate}\n`;
       text += `דחיפות: ${newTask.urgency}`;
-
       const waLink = `https://wa.me/?text=${encodeURIComponent(text)}`;
-
       setNewTask({ title: '', description: '', urgency: 'סטנדרטית', assignee: 'כולם', target_date: today, status: 'לא התחלתי' });
-      setShowTaskForm(false);
-      fetchData();
-      
+      setShowTaskForm(false); fetchData(); fetchData();
       window.location.href = waLink;
     }
   };
@@ -193,9 +184,15 @@ export default function HomePage() {
             <div className="space-y-4">
               {tasks.filter(t => t.status !== 'סיימתי').map(task => (
                 <div key={task.id} className="bg-white p-5 rounded-3xl shadow-md border-r-8 border-indigo-500">
-                  <div className="flex justify-between items-start">
-                    <h3 className="font-bold text-lg">{task.title}</h3>
-                    <button onClick={() => deleteTask(task.id!)} className="text-slate-300 text-xs">מחק</button>
+                  <div className="flex justify-between items-start gap-4">
+                    <h3 className="font-bold text-lg flex-1">{task.title}</h3>
+                    {/* כפתור מחיקה מעוצב */}
+                    <button 
+                      onClick={() => deleteTask(task.id!)} 
+                      className="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-600 text-[11px] font-black border border-slate-200 hover:bg-red-50 hover:text-red-700 hover:border-red-100 transition-colors pointer-events-auto shadow-sm"
+                    >
+                      מחק 🗑️
+                    </button>
                   </div>
                   <p className="text-sm text-slate-500 mt-1">{task.description}</p>
                   <div className="flex gap-2 mt-3 text-xs font-bold text-slate-400">
