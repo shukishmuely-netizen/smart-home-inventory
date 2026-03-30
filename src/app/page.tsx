@@ -175,28 +175,35 @@ export default function HomePage() {
     fetchData();
   };
 
+  // ----- הנה הלוגיקה החסרה ששומרת ופותחת וואטסאפ -----
   const handleAddTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTask.title) return;
     
+    // 1. קודם כל מכינים את ההודעה לוואטסאפ (כדי שלא יאבד מידע מהסטייט)
+    const dateText = newTask.target_date ? newTask.target_date.split('-').reverse().join('/') : 'ללא תאריך';
+    let waMessage = `📌 *משימה חדשה: ${newTask.title}*\n`;
+    if (newTask.description) waMessage += `📝 ${newTask.description}\n`;
+    waMessage += `\n👤 *באחריות:* ${newTask.assignee}`;
+    waMessage += `\n📅 *תאריך יעד:* ${dateText}`;
+    waMessage += `\n🔥 *דחיפות:* ${newTask.urgency}`;
+    waMessage += `\n\nנשלח מהבית של ניאו 🏠`;
+
+    const encodedMessage = encodeURIComponent(waMessage);
+    const waLink = `https://wa.me/?text=${encodedMessage}`;
+
+    // 2. שומרים בדאטה-בייס
     const { error } = await supabase.from('tasks').insert([newTask]);
     
     if (!error) {
-      const dateText = newTask.target_date ? newTask.target_date.split('-').reverse().join('/') : 'ללא תאריך';
-      let waMessage = `📌 *משימה חדשה: ${newTask.title}*\n`;
-      if (newTask.description) waMessage += `📝 ${newTask.description}\n`;
-      waMessage += `\n👤 *באחריות:* ${newTask.assignee}`;
-      waMessage += `\n📅 *תאריך יעד:* ${dateText}`;
-      waMessage += `\n🔥 *דחיפות:* ${newTask.urgency}`;
-      waMessage += `\n\nנשלח מהבית של ניאו 🏠`;
-
-      const encodedMessage = encodeURIComponent(waMessage);
-      window.open(`https://wa.me/?text=${encodedMessage}`, '_blank');
-
+      // 3. מאפסים את הטופס
       setNewTask({ title: '', description: '', urgency: 'סטנדרטית', assignee: '👫 כולם', target_date: today, status: 'לא התחלתי' });
       setShowTaskForm(false);
       showStatus('✅ המשימה נוספה ונשלחה!', true);
       fetchData();
+      
+      // 4. משגרים לוואטסאפ (משתמשים ב-location.href שעוקף חוסמי פופאפים בטלפון)
+      window.location.href = waLink;
     } else {
       showStatus('❌ שגיאה בשמירת המשימה', true);
     }
