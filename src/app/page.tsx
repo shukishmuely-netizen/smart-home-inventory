@@ -82,18 +82,14 @@ export default function HomePage() {
     updateExactQuantity(item, newQty);
   };
 
-  const saveItemAI = async (item: Item) => {
+  const saveItemAI = async (item: Item, action: 'add' | 'remove' = 'add') => {
     const name = item.item_name || (item as any).name;
-    // מחפש התאמה חכמה - קודם בודק אם יש התאמה גם לשם וגם לקטגוריה
-    let existing = inventory.find(i => i.item_name === name && i.category === item.category);
-    // אם לא מצא התאמה כפולה, מחפש רק לפי השם
-    if (!existing) existing = inventory.find(i => i.item_name === name);
-    
-    let newQty = item.quantity;
+    const existing = inventory.find(i => i.item_name === name);
+    let newQty = item.quantity; 
     
     if (existing) {
-      newQty = Math.max(0, existing.quantity + item.quantity); // מחבר את הכמות (שתהיה שלילית אם זו הסרה)
-      setInventory(prev => prev.map(i => i.id === existing!.id ? { ...i, quantity: newQty } : i));
+      newQty = Math.max(0, existing.quantity + item.quantity); 
+      setInventory(prev => prev.map(i => i.item_name === name ? { ...i, quantity: newQty } : i));
       await supabase.from('inventory_items').update({ quantity: newQty }).eq('id', existing.id);
     } else {
       const newItem = { item_name: name, quantity: Math.max(0, item.quantity), category: item.category || 'כללי', location: item.location || 'מזווה', household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72' };
@@ -110,10 +106,8 @@ export default function HomePage() {
     try {
       const res = await fetch('/api/parse', { method: 'POST', body: JSON.stringify({ text: input }) });
       const data = await res.json();
-      const items = data.items || [];
-
       if (activeView === 'SHOPPING') {
-        for (const item of items) {
+        for (const item of data.items) {
            const finalName = item.quantity > 1 ? `${item.name} (${item.quantity})` : item.name;
            await supabase.from('shopping_list').insert([{ item_name: finalName, category: item.category || 'כללי' }]);
         }
@@ -122,46 +116,28 @@ export default function HomePage() {
         const certainItems = [];
         const uncertainItems = [];
 
-        for (const item of items) {
+        for (const item of data.items) {
           const name = item.name || item.item_name;
-          const isRemoval = item.quantity < 0; // ה-AI עכשיו שולח מספר שלילי בהורדה
+          const isRemoval = item.quantity < 0; 
 
-          // רזולוציה חכמה (Smart Resolution) להורדת פריטים
           if (item.uncertain && isRemoval) {
             const matches = inventory.filter(i => i.item_name === name || i.item_name.includes(name));
-            
             if (matches.length === 1) {
-              // יש רק סוג אחד במלאי - אין צורך לשאול! מורידים ממנו ישירות
-              certainItems.push({
-                ...item,
-                uncertain: false,
-                item_name: matches[0].item_name,
-                name: matches[0].item_name,
-                category: matches[0].category,
-                location: matches[0].location
-              });
+              certainItems.push({ ...item, uncertain: false, item_name: matches[0].item_name, name: matches[0].item_name, category: matches[0].category, location: matches[0].location });
             } else if (matches.length > 1) {
-              // יש יותר מסוג אחד במלאי (למשל גם שימורים וגם קפוא) - נשאל את המשתמש
-              uncertainItems.push({
-                ...item,
-                options: Array.from(new Set(matches.map(m => m.category))) // נציג לו רק את האופציות שקיימות לו במלאי
-              });
+              uncertainItems.push({ ...item, options: Array.from(new Set(matches.map(m => m.category))) });
             } else {
-              // מנסה להוריד משהו שלא קיים במלאי בכלל? נכניס כרגיל וזה פשוט יתאפס ל-0
               certainItems.push({ ...item, uncertain: false });
             }
           } else if (item.uncertain) {
-            // הוספה של פריט חדש לא ברור למלאי - תמיד נשאל לסיווג
             uncertainItems.push(item);
           } else {
             certainItems.push(item);
           }
         }
 
-        // שמירת כל הפריטים הברורים (כולל אלו שהמערכת פתרה לבד)
         for (const item of certainItems) await saveItemAI(item);
         
-        // הצגת אלו שעדיין דורשים סיווג
         if (uncertainItems.length > 0) {
           setPendingItems(uncertainItems.map((i: any) => ({ ...i, item_name: i.name || i.item_name })));
           showStatus(`🤔 נדרש סיווג`, false); 
@@ -215,8 +191,13 @@ export default function HomePage() {
     await supabase.from('tasks').update({ status: newStatus }).eq('id', id);
   };
 
+  const handleRestoreTask = async (id: string, newDate: string) => {
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, status: 'לא התחלתי', target_date: newDate } : t));
+    await supabase.from('tasks').update({ status: 'לא התחלתי', target_date: newDate }).eq('id', id);
+  };
+
   const deleteTask = async (id: string) => {
-    if (confirm('למחוק את המשימה?')) {
+    if (confirm('למחוק את המשימה לתמיד?')) {
       setTasks(prev => prev.filter(t => t.id !== id));
       await supabase.from('tasks').delete().eq('id', id);
     }
@@ -261,7 +242,6 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* שורת חיפוש שנפתחת */}
           {isSearchOpen && activeView !== 'HOME' && (
             <div className="relative w-full animate-in fade-in slide-in-from-top-2 mt-2">
               <input 
@@ -338,7 +318,6 @@ export default function HomePage() {
                           const isFridge = ['קפואים', 'קירור', 'טרי'].includes(opt);
                           setPendingItems(prev => prev.filter(p => p.item_name !== item.item_name)); 
                           await saveItemAI({...item, category: opt, location: isFridge ? 'מקרר' : 'מזווה'});
-                          
                           if (pendingItems.length <= 1) showStatus('✅ המלאי עודכן!', true);
                         }} className="bg-amber-100 hover:bg-amber-400 hover:text-amber-900 text-amber-800 px-4 py-2 rounded-xl font-bold text-sm transition-all pointer-events-auto">{opt}</button>
                       ))}
@@ -485,96 +464,6 @@ export default function HomePage() {
             )}
 
             <div className="space-y-4">
-              {tasks.map(task => {
-                const urgencyColor = task.urgency === 'דחופה מאד' ? 'border-red-500 bg-red-50' : task.urgency === 'גבוהה' ? 'border-orange-400 bg-orange-50' : 'border-slate-200 bg-white';
-                return (
-                  <div key={task.id} className={`p-5 rounded-[2rem] border-r-8 shadow-sm transition-all ${urgencyColor} ${task.status === 'סיימתי' ? 'opacity-50 grayscale' : ''}`}>
-                    <div className="flex justify-between items-start mb-2">
-                      <h3 className={`font-black text-lg ${task.status === 'סיימתי' ? 'line-through text-slate-400' : ''}`}>{task.title}</h3>
-                      <button onClick={() => deleteTask(task.id!)} className="text-slate-300 text-xs hover:text-red-400 pointer-events-auto">מחק</button>
-                    </div>
-                    {task.description && <p className="text-sm text-slate-500 mb-3">{task.description}</p>}
-                    <div className="flex flex-wrap gap-2 text-[10px] font-bold mb-4">
-                      <span className="bg-white/70 px-2 py-1 rounded-full border border-black/5 shadow-sm">👤 {task.assignee}</span>
-                      <span className="bg-white/70 px-2 py-1 rounded-full border border-black/5 shadow-sm">📅 {task.target_date || 'ללא תאריך'}</span>
-                      <span className="bg-white/70 px-2 py-1 rounded-full border border-black/5 shadow-sm">🔥 {task.urgency}</span>
-                    </div>
-                    <select 
-                      className="w-full p-2 rounded-xl text-xs font-bold bg-white border border-slate-100 shadow-inner pointer-events-auto" 
-                      value={task.status} 
-                      onChange={e => updateTaskStatus(task.id!, e.target.value)}
-                    >
-                      <option>לא התחלתי</option><option>בתהליך</option><option>לקראת סיום</option><option>סיימתי</option>
-                    </select>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-      </div>
-    </main>
-  );
-}
-
-function InventoryCard({ item, editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName, updateExactQuantity, onPlus, onHalf, onMinus }: any) {
-  return (
-    <div className="flex justify-between items-center bg-white p-4 rounded-[1.5rem] shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
-      <div className="text-right flex-1">
-        {editingId === item.id ? (
-          <div className="flex items-center gap-2 mb-1">
-            <input autoFocus value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedName(item.id, 'inventory_items')} className="border-b-2 border-teal-500 bg-teal-50 px-2 py-1 outline-none font-bold text-lg w-[120px] pointer-events-auto" />
-            <button onClick={() => saveEditedName(item.id, 'inventory_items')} className="bg-green-100 text-green-700 p-2 rounded-lg pointer-events-auto shadow-sm">✅</button>
-          </div>
-        ) : (
-          <span onClick={() => {setEditingId(item.id); setEditNameValue(item.item_name);}} className="block font-bold text-lg text-slate-800 cursor-pointer hover:text-teal-600 hover:underline decoration-dashed decoration-slate-300 pointer-events-auto transition-colors" title="לחץ לעריכת השם">
-            {item.item_name}
-          </span>
-        )}
-        <span className="text-[10px] uppercase font-bold text-slate-400">{item.category} • {item.location}</span>
-      </div>
-      <div className="flex items-center gap-2" dir="ltr">
-        <button onClick={onHalf} className="w-8 h-8 rounded-full bg-amber-100 text-amber-600 font-bold text-xs pointer-events-auto shadow-sm hover:bg-amber-200 transition-colors active:scale-90">½</button>
-        <button onClick={onMinus} className="w-9 h-9 rounded-full bg-rose-100 text-rose-600 font-black pointer-events-auto shadow-sm hover:bg-rose-200 transition-colors active:scale-90">-</button>
-        
-        <div className="relative flex items-center justify-center min-w-[36px]">
-          <select 
-            value={Math.floor(item.quantity)} 
-            onChange={(e) => updateExactQuantity(item, Number(e.target.value))}
-            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer pointer-events-auto"
-          >
-            {[...Array(21).keys()].map(num => (
-              <option key={num} value={num}>{num}</option>
-            ))}
-          </select>
-          <span className={`text-xl font-black pointer-events-none ${item.quantity <= 2 ? 'text-rose-600' : 'text-slate-700'}`}>
-            {item.quantity}
-          </span>
-        </div>
-
-        <button onClick={onPlus} className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-600 font-black pointer-events-auto shadow-sm hover:bg-emerald-200 transition-colors active:scale-90">+</button>
-      </div>
-    </div>
-  );
-}
-
-function ShoppingCard({ item, editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName, onRemove }: any) {
-  return (
-    <div className="flex justify-between items-center gap-4 bg-white p-4 rounded-[1.5rem] shadow-sm border border-rose-50 hover:border-rose-100 transition-colors">
-      <div className="flex items-center gap-4 flex-1">
-        <button onClick={() => onRemove(item)} className="bg-rose-100 text-rose-600 hover:bg-rose-200 px-4 py-2 rounded-2xl text-xs font-black shadow-sm pointer-events-auto transition-colors">הסר</button>
-        {editingId === item.id ? (
-          <div className="flex items-center gap-2">
-            <input autoFocus value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedName(item.id, 'shopping_list')} className="border-b-2 border-rose-500 bg-rose-50 px-2 py-1 outline-none font-bold text-lg w-[140px] pointer-events-auto" />
-            <button onClick={() => saveEditedName(item.id, 'shopping_list')} className="bg-green-100 text-green-700 p-2 rounded-lg pointer-events-auto shadow-sm">✅</button>
-          </div>
-        ) : (
-          <span onClick={() => {setEditingId(item.id); setEditNameValue(item.item_name);}} className="font-bold text-slate-800 text-lg cursor-pointer hover:text-rose-600 hover:underline decoration-dashed decoration-slate-300 pointer-events-auto transition-colors" title="לחץ לעריכת השם">
-            {item.item_name}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
+              {/* משימות פעילות (לא הסתיימו) */}
+              {tasks.filter(t => t.status !== 'סיימתי').map(task => {
+                const urgency
