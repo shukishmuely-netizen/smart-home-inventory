@@ -51,6 +51,9 @@ export default function HomePage() {
 
   useEffect(() => { fetchData(); }, []);
 
+  // הפונקציה שהייתה חסרה!
+  const handleRefresh = () => window.location.reload();
+
   const changeView = (view: typeof activeView) => {
     setActiveView(view); setIsMenuOpen(false); setIsSearchOpen(false); setSearchTerm('');
   };
@@ -58,6 +61,11 @@ export default function HomePage() {
   const updateExactQuantity = (item: Item, newQty: number) => {
     setInventory(prev => prev.map(i => i.id === item.id ? { ...i, quantity: newQty } : i));
     supabase.from('inventory_items').update({ quantity: newQty }).eq('id', item.id).then();
+    
+    const alreadyInShopping = shoppingList.some(s => s.item_name === item.item_name);
+    if (newQty <= 2 && newQty < item.quantity && !alreadyInShopping) {
+      setLowStockAlerts(prev => [...prev.filter(i => i.item_name !== item.item_name), { ...item, quantity: newQty }]);
+    }
   };
 
   const handlePlus = (item: Item) => updateExactQuantity(item, item.quantity + 1);
@@ -171,7 +179,6 @@ export default function HomePage() {
     }
   };
 
-  // אבטחת קריסות: מוודאים ש-item_name תמיד קיים לפני חיפוש או מיון
   const safeInventory = inventory || [];
   const safeShoppingList = shoppingList || [];
 
@@ -238,7 +245,7 @@ export default function HomePage() {
                <div className="text-right"><span className="block text-2xl font-black">🛒 קניות</span><span className="text-slate-400 text-sm">{shoppingList.length} פריטים</span></div>
                <span className="text-4xl">🛍️</span>
             </button>
-            <button onClick={() => changeView('TASKS')} className="p-6 bg-white rounded-[2rem] shadow-lg border-b-8 border-purple-500 flex items-center justify-between active:scale-95 transition-all">
+            <button onClick={() => changeView('TASKS')} className="p-6 bg-white rounded-[2rem] shadow-lg border-b-8 border-indigo-500 text-2xl font-black flex justify-between items-center">
                <div className="text-right"><span className="block text-2xl font-black">📝 משימות</span><span className="text-slate-400 text-sm">{activeTasks.length} פתוחות</span></div>
                <span className="text-4xl">📌</span>
             </button>
@@ -319,7 +326,6 @@ export default function HomePage() {
                 <button key={f} onClick={() => setInvFilter(f as any)} className={`flex-1 py-2.5 rounded-lg text-xs font-bold transition-all pointer-events-auto ${invFilter === f ? 'bg-teal-500 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>{f}</button>
               ))}
             </div>
-
             {sortBy === 'category' ? (
               <div className="space-y-8">
                 {displayCategories.map(cat => {
@@ -401,7 +407,7 @@ export default function HomePage() {
                   </select>
                 </div>
                 <input type="date" className="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold" value={newTask.target_date} onChange={e => setNewTask({...newTask, target_date: e.target.value})} />
-                <button type="submit" className="w-full bg-emerald-500 text-white p-5 rounded-2xl font-black shadow-md">שמור ושלח לוואטסאפ 💬</button>
+                <button type="submit" className="w-full bg-emerald-500 text-white p-5 rounded-2xl font-black shadow-md">שמור ושלח לוואטסאפ</button>
               </form>
             )}
 
@@ -413,7 +419,12 @@ export default function HomePage() {
                   <div key={task.id} className={`bg-white p-6 rounded-[2rem] shadow-md border-r-8 ${urgencyColor} relative group`}>
                     <div className="flex justify-between items-start gap-4 mb-2">
                       <h3 className="font-black text-xl text-slate-800 flex-1">{task.title}</h3>
-                      <button onClick={() => deleteTask(task.id!)} className="px-3 py-1.5 rounded-xl bg-slate-50 text-slate-400 text-[10px] font-black border border-slate-100 hover:bg-red-50 hover:text-red-600 hover:border-red-100 transition-all pointer-events-auto">מחק 🗑️</button>
+                      <button 
+                        onClick={() => deleteTask(task.id!)} 
+                        className="px-3 py-1.5 rounded-xl bg-slate-50 text-slate-400 text-[10px] font-black border border-slate-100 hover:bg-red-50 hover:text-red-600 hover:border-red-100 transition-all pointer-events-auto"
+                      >
+                        מחק 🗑️
+                      </button>
                     </div>
                     {task.description && <p className="text-sm text-slate-500 mb-4">{task.description}</p>}
                     <div className="flex flex-wrap gap-2 text-[10px] font-black text-slate-400">
@@ -421,10 +432,26 @@ export default function HomePage() {
                       <span className="bg-slate-50 px-2 py-1 rounded-full">📅 {task.target_date}</span>
                       <span className="bg-slate-50 px-2 py-1 rounded-full">🔥 {task.urgency}</span>
                     </div>
+                    
                     <div className="flex bg-slate-100 p-1 rounded-2xl mt-5 gap-1">
-                      <button onClick={() => updateTaskStatus(task.id!, 'לא התחלתי')} className={`flex-1 py-2.5 rounded-xl text-[11px] font-black transition-all ${task.status === 'לא התחלתי' || !task.status ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-400'}`}>{isPlural ? 'לא התחלנו' : 'לא התחלתי'}</button>
-                      <button onClick={() => updateTaskStatus(task.id!, 'בתהליך')} className={`flex-1 py-2.5 rounded-xl text-[11px] font-black transition-all ${task.status === 'בתהליך' ? 'bg-blue-500 text-white shadow-sm' : 'text-slate-400'}`}>בתהליך</button>
-                      <button onClick={() => updateTaskStatus(task.id!, 'סיימתי')} className="flex-1 py-2.5 rounded-xl text-[11px] font-black text-slate-400 hover:bg-emerald-500 hover:text-white transition-all">{isPlural ? 'סיימנו' : 'סיימתי'}</button>
+                      <button 
+                        onClick={() => updateTaskStatus(task.id!, 'לא התחלתי')} 
+                        className={`flex-1 py-2.5 rounded-xl text-[11px] font-black transition-all ${task.status === 'לא התחלתי' || !task.status ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-400'}`}
+                      >
+                        {isPlural ? 'לא התחלנו' : 'לא התחלתי'}
+                      </button>
+                      <button 
+                        onClick={() => updateTaskStatus(task.id!, 'בתהליך')} 
+                        className={`flex-1 py-2.5 rounded-xl text-[11px] font-black transition-all ${task.status === 'בתהליך' ? 'bg-blue-500 text-white shadow-sm' : 'text-slate-400'}`}
+                      >
+                        בתהליך
+                      </button>
+                      <button 
+                        onClick={() => updateTaskStatus(task.id!, 'סיימתי')} 
+                        className="flex-1 py-2.5 rounded-xl text-[11px] font-black text-slate-400 hover:bg-emerald-500 hover:text-white transition-all"
+                      >
+                        {isPlural ? 'סיימנו' : 'סיימתי'}
+                      </button>
                     </div>
                   </div>
                 );
@@ -435,7 +462,9 @@ export default function HomePage() {
               <div className="mt-16 pt-8 border-t-2 border-slate-200">
                 <h3 className="font-black text-slate-400 text-sm uppercase mb-6 pr-2">✅ משימות שהסתיימו:</h3>
                 <div className="space-y-4 opacity-70 hover:opacity-100 transition-opacity">
-                  {completedTasks.map(task => <CompletedTaskCard key={task.id} task={task} onRestore={handleRestoreTask} onDelete={deleteTask} />)}
+                  {completedTasks.map(task => (
+                     <CompletedTaskCard key={task.id} task={task} onRestore={handleRestoreTask} onDelete={deleteTask} />
+                  ))}
                 </div>
               </div>
             )}
