@@ -23,9 +23,7 @@ export default function HomePage() {
   const [lowStockAlerts, setLowStockAlerts] = useState<Item[]>([]);
   const [removedItems, setRemovedItems] = useState<any[]>([]);
 
-  const [newTask, setNewTask] = useState<Task>({ 
-    title: '', description: '', urgency: 'סטנדרטית', assignee: 'כולם', target_date: today, status: 'לא התחלתי' 
-  });
+  const [newTask, setNewTask] = useState<Task>({ title: '', description: '', urgency: 'סטנדרטית', assignee: 'כולם', target_date: today, status: 'לא התחלתי' });
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState('');
@@ -44,17 +42,7 @@ export default function HomePage() {
       supabase.from('category_order').select('category_name').order('sort_order'),
       supabase.from('tasks').select('*').order('created_at', { ascending: false })
     ]);
-    
-    if (invRes.data) {
-      const cleanInv = invRes.data.filter((i: any) => {
-        if (i.category === 'uncertain' || i.category === 'לא ידוע') {
-          setPendingItems(prev => [...prev, { ...i, needs_classification: true }]);
-          return false;
-        }
-        return true;
-      });
-      setInventory(cleanInv);
-    }
+    if (invRes.data) setInventory(invRes.data);
     if (shopRes.data) setShoppingList(shopRes.data);
     if (catsRes.data) setCategories(catsRes.data.map(c => c.category_name));
     if (tskRes.data) setTasks(tskRes.data);
@@ -76,28 +64,35 @@ export default function HomePage() {
   const handlePlus = (item: Item) => updateExactQuantity(item, item.quantity + 1);
   const handleMinus = (item: Item) => updateExactQuantity(item, Math.max(0, item.quantity - 1));
 
-  const saveItemWithCategory = async (item: any) => {
-    const name = item.name || item.item_name;
-    const cat = item.category || 'כללי';
+  // פונקציית שמירה חכמה שמתאימה גם למלאי וגם לקניות!
+  const saveItemToDB = async (item: any, view: string) => {
+    const name = item.name || item.item_name || 'פריט לא ידוע';
+    let cat = item.category || 'כללי';
     
+    // ניקוי תקלות של ה-AI
+    if (cat.toLowerCase() === 'uncertain' || cat === 'לא ידוע') cat = 'כללי';
+
+    // הוספת הקטגוריה אם היא חדשה
     if (cat !== 'כללי' && !categories.includes(cat)) {
       await supabase.from('category_order').insert([{ category_name: cat, sort_order: 99 }]);
-      setCategories(prev => [...prev, cat]);
+      setCategories(prev => Array.from(new Set([...prev, cat])));
     }
 
-    let existing = inventory.find(i => i.item_name === name);
-    if (existing) {
-      const newQty = Math.max(0, existing.quantity + item.quantity);
-      await supabase.from('inventory_items').update({ quantity: newQty, category: cat }).eq('id', existing.id);
-    } else {
-      await supabase.from('inventory_items').insert([{ 
-        item_name: name, 
-        quantity: Math.max(0, item.quantity), 
-        category: cat, 
-        location: item.location || 'מזווה', 
-        household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72' 
-      }]);
+    if (view === 'INVENTORY') {
+      let existing = inventory.find(i => i.item_name === name);
+      if (existing) {
+        const newQty = Math.max(0, existing.quantity + (item.quantity || 1));
+        await supabase.from('inventory_items').update({ quantity: newQty, category: cat }).eq('id', existing.id);
+      } else {
+        await supabase.from('inventory_items').insert([{ 
+          item_name: name, quantity: Math.max(0, item.quantity || 1), category: cat, location: item.location || 'מזווה', household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72' 
+        }]);
+      }
+    } else if (view === 'SHOPPING') {
+      const finalName = item.quantity > 1 ? `${name} (${item.quantity})` : name;
+      await supabase.from('shopping_list').insert([{ item_name: finalName, category: cat }]);
     }
+    fetchData();
   };
 
   const handleUpdate = async (e: React.FormEvent) => {
@@ -109,43 +104,52 @@ export default function HomePage() {
       const res = await fetch('/api/parse', { method: 'POST', body: JSON.stringify({ text: input }) });
       const data = await res.json();
       
-      if (data.new_categories) {
+      // 1. יצירת קטגוריות חדשות לפני הכל
+      if (data.new_categories && data.new_categories.length > 0) {
         for (const nc of data.new_categories) {
           if (!categories.includes(nc)) {
             await supabase.from('category_order').insert([{ category_name: nc, sort_order: 99 }]);
+            setCategories(prev => Array.from(new Set([...prev, nc])));
           }
         }
+        showStatus('✅ קטגוריה נוספה!', true);
       }
 
-      if (data.items) {
+      // 2. טיפול במוצרים
+      if (data.items && data.items.length > 0) {
+        const certainItems = [];
+        const uncertainItems = [];
+
         for (const item of data.items) {
-          if (item.needs_classification) {
-            setPendingItems(prev => [...prev, item]);
+          const cat = (item.category || '').toLowerCase();
+          // לוכד כל בעיה בסיווג כדי לשלוח למשתמש לשאלה
+          if (item.needs_classification || cat === 'uncertain' || cat === 'לא ידוע') {
+            uncertainItems.push(item);
           } else {
-            await saveItemWithCategory(item);
+            certainItems.push(item);
           }
         }
-        showStatus('✅ עודכן!', true);
+
+        for (const item of certainItems) {
+          await saveItemToDB(item, activeView);
+        }
+        
+        if (uncertainItems.length > 0) {
+          setPendingItems(uncertainItems.map((i: any) => ({ ...i, item_name: i.name || i.item_name || 'פריט' })));
+          showStatus(`🤔 נדרש סיווג`, false); 
+        } else {
+          showStatus('✅ עודכן!', true);
+        }
       }
       
       setInput(''); 
-      fetchData();
     } catch { showStatus('❌ שגיאה בחיבור', true); }
   };
 
   const handleResolvePending = async (item: Item, selectedCategory: string) => {
-    const isFridge = ['קפואים', 'קירור', 'טרי', 'מוצרי חלב', 'בשר'].some(c => selectedCategory.includes(c));
-    const location = isFridge ? 'מקרר' : 'מזווה';
-
-    if (!categories.includes(selectedCategory)) {
-      await supabase.from('category_order').insert([{ category_name: selectedCategory, sort_order: 99 }]);
-      setCategories(prev => [...prev, selectedCategory]);
-    }
-
     setPendingItems(prev => prev.filter(p => p.item_name !== item.item_name)); 
-    await saveItemWithCategory({...item, category: selectedCategory, location});
-    
-    if (pendingItems.length <= 1) showStatus('✅ המלאי עודכן!', true);
+    await saveItemToDB({...item, category: selectedCategory}, activeView);
+    if (pendingItems.length <= 1) showStatus('✅ עודכן!', true);
   };
 
   const addToShopping = async (item: Item) => {
@@ -264,8 +268,8 @@ export default function HomePage() {
 
       <div className="max-w-2xl mx-auto p-4 relative z-10">
         
-        {/* אזור התראות סיווג לקטגוריות */}
-        {pendingItems.length > 0 && (
+        {/* אזור התראות סיווג לקטגוריות - פועל עכשיו גם במלאי וגם בקניות! */}
+        {pendingItems.length > 0 && (activeView === 'INVENTORY' || activeView === 'SHOPPING') && (
           <div className="mb-8 space-y-4">
             {pendingItems.map((item, idx) => (
               <ClassificationCard 
@@ -275,7 +279,7 @@ export default function HomePage() {
                 onResolve={handleResolvePending} 
                 onIgnore={() => {
                   setPendingItems(prev => prev.filter(p => p.item_name !== item.item_name));
-                  if (pendingItems.length <= 1) showStatus('✅ המלאי עודכן!', true);
+                  if (pendingItems.length <= 1) showStatus('✅ מעודכן!', true);
                 }}
               />
             ))}
@@ -309,7 +313,7 @@ export default function HomePage() {
         {(activeView === 'INVENTORY' || activeView === 'SHOPPING') && (
           <div className="bg-white p-5 rounded-[2rem] shadow-xl mb-6 border border-slate-50 relative z-20">
             <form onSubmit={handleUpdate} className="space-y-3">
-              <textarea value={input} onChange={e => setInput(e.target.value)} placeholder={activeView === 'INVENTORY' ? "מה הוספנו/הורדנו מהמלאי? (למשל: תוריד 2 חלב, הוסף קטגוריית קירור)" : "מה חסר? (למשל: עגבניות, 3 קולה)"} className="w-full p-4 bg-slate-50 rounded-2xl text-sm min-h-[70px] border-none focus:ring-2 focus:ring-amber-300 pointer-events-auto" />
+              <textarea value={input} onChange={e => setInput(e.target.value)} placeholder={activeView === 'INVENTORY' ? "מה הוספנו/הורדנו מהמלאי? (למשל: תוריד 2 חלב, הוסף קטגוריית קירור)" : "מה חסר? (למשל: ביצים בקירור, 3 קולה)"} className="w-full p-4 bg-slate-50 rounded-2xl text-sm min-h-[70px] border-none focus:ring-2 focus:ring-amber-300 pointer-events-auto" />
               <button type="submit" className={`w-full p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto ${activeView === 'INVENTORY' ? 'bg-teal-600 hover:bg-teal-700' : 'bg-rose-600 hover:bg-rose-700'}`}>
                  {activeView === 'INVENTORY' ? 'עדכן מלאי ✨' : 'הוסף לקניות 🛒'}
               </button>
@@ -425,7 +429,7 @@ export default function HomePage() {
                   </select>
                 </div>
                 <input type="date" className="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold" value={newTask.target_date} onChange={e => setNewTask({...newTask, target_date: e.target.value})} />
-                <button type="submit" className="w-full bg-emerald-500 text-white p-5 rounded-2xl font-black shadow-md">שמור ושלח לוואטסאפ 💬</button>
+                <button type="submit" className="w-full bg-emerald-500 text-white p-5 rounded-2xl font-black shadow-md">שמור ושלח לוואטסאפ</button>
               </form>
             )}
 
