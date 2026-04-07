@@ -6,19 +6,18 @@ export async function POST(request: NextRequest) {
     const { text } = await request.json();
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
-    const prompt = `You are a smart home kitchen inventory AI. Analyze the following user input in Hebrew: "${text}"
+    const prompt = `You are a kitchen manager AI. Analyze this Hebrew text: "${text}"
 
-    RULES:
-    1. INTENT: Is the user adding items, removing items, or explicitly creating new categories?
-    2. QUANTITIES: If removing/using items (e.g., "תוריד", "נגמר"), make the quantity NEGATIVE (e.g. -1). If adding, positive. Sum duplicate items.
-    3. CATEGORIES: Extract the EXACT category if the user specifies one (e.g., "תוסיף חומוס בשימורים" -> item: חומוס, category: שימורים).
-    4. UNKNOWN CATEGORIES: If the user doesn't specify a category and you are completely unsure what standard category fits best, set "needs_classification": true. DO NOT use words like "uncertain". Try to guess standard categories first (e.g., חלב -> מוצרי חלב).
-    5. NEW CATEGORIES: If the user explicitly asks to create a new category (e.g., "תוסיף קטגוריה קירור"), return it in the "new_categories" array.
+    CRITICAL RULES:
+    1. CATEGORY EXTRACTION: If the user says "X in Y" (X ב-Y), X is the item and Y is the category (e.g., "ביצים בקירור" -> name: "ביצים", category: "קירור").
+    2. NEW CATEGORIES: If the user says "add category X" (תוסיף קטגוריה בשם X), put X in the "new_categories" array.
+    3. NO UNCERTAIN: Never return "uncertain" as a category string. If you don't know the category and the user didn't specify one, set "needs_classification": true and "category": null.
+    4. QUANTITIES: Use negative numbers for removal ("תוריד", "נגמר").
 
-    Return JSON format ONLY exactly like this:
+    Output JSON ONLY:
     {
       "items": [
-        { "name": "string", "quantity": 1, "category": "string | null", "location": "מקרר או מזווה", "needs_classification": boolean }
+        { "name": "string", "quantity": number, "category": "string | null", "location": "מקרר | מזווה", "needs_classification": boolean }
       ],
       "new_categories": ["string"]
     }`;
@@ -30,8 +29,7 @@ export async function POST(request: NextRequest) {
       temperature: 0,
     });
 
-    const parsedData = JSON.parse(response.choices[0].message.content || '{"items":[], "new_categories":[]}');
-    return NextResponse.json(parsedData);
+    return NextResponse.json(JSON.parse(response.choices[0].message.content || '{"items":[], "new_categories":[]}'));
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
