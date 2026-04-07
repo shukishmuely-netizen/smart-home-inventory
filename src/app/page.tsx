@@ -23,7 +23,9 @@ export default function HomePage() {
   const [lowStockAlerts, setLowStockAlerts] = useState<Item[]>([]);
   const [removedItems, setRemovedItems] = useState<any[]>([]);
 
-  const [newTask, setNewTask] = useState<Task>({ title: '', description: '', urgency: 'סטנדרטית', assignee: 'כולם', target_date: today, status: 'לא התחלתי' });
+  const [newTask, setNewTask] = useState<Task>({ 
+    title: '', description: '', urgency: 'סטנדרטית', assignee: 'כולם', target_date: today, status: 'לא התחלתי' 
+  });
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState('');
@@ -42,7 +44,17 @@ export default function HomePage() {
       supabase.from('category_order').select('category_name').order('sort_order'),
       supabase.from('tasks').select('*').order('created_at', { ascending: false })
     ]);
-    if (invRes.data) setInventory(invRes.data);
+    
+    if (invRes.data) {
+      const cleanInv = invRes.data.filter((i: any) => {
+        if (i.category === 'uncertain' || i.category === 'לא ידוע') {
+          setPendingItems(prev => [...prev, { ...i, needs_classification: true }]);
+          return false;
+        }
+        return true;
+      });
+      setInventory(cleanInv);
+    }
     if (shopRes.data) setShoppingList(shopRes.data);
     if (catsRes.data) setCategories(catsRes.data.map(c => c.category_name));
     if (tskRes.data) setTasks(tskRes.data);
@@ -64,21 +76,16 @@ export default function HomePage() {
   const handlePlus = (item: Item) => updateExactQuantity(item, item.quantity + 1);
   const handleMinus = (item: Item) => updateExactQuantity(item, Math.max(0, item.quantity - 1));
 
-  // פונקציית שמירה חכמה שמתאימה גם למלאי וגם לקניות!
-  const saveItemToDB = async (item: any, view: string) => {
+  const saveItemWithCategory = async (item: any) => {
     const name = item.name || item.item_name || 'פריט לא ידוע';
     let cat = item.category || 'כללי';
     
-    // ניקוי תקלות של ה-AI
-    if (cat.toLowerCase() === 'uncertain' || cat === 'לא ידוע') cat = 'כללי';
-
-    // הוספת הקטגוריה אם היא חדשה
     if (cat !== 'כללי' && !categories.includes(cat)) {
       await supabase.from('category_order').insert([{ category_name: cat, sort_order: 99 }]);
       setCategories(prev => Array.from(new Set([...prev, cat])));
     }
 
-    if (view === 'INVENTORY') {
+    if (activeView === 'INVENTORY') {
       let existing = inventory.find(i => i.item_name === name);
       if (existing) {
         const newQty = Math.max(0, existing.quantity + (item.quantity || 1));
@@ -88,7 +95,7 @@ export default function HomePage() {
           item_name: name, quantity: Math.max(0, item.quantity || 1), category: cat, location: item.location || 'מזווה', household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72' 
         }]);
       }
-    } else if (view === 'SHOPPING') {
+    } else if (activeView === 'SHOPPING') {
       const finalName = item.quantity > 1 ? `${name} (${item.quantity})` : name;
       await supabase.from('shopping_list').insert([{ item_name: finalName, category: cat }]);
     }
@@ -101,10 +108,13 @@ export default function HomePage() {
     showStatus('מעבד...', false);
     
     try {
-      const res = await fetch('/api/parse', { method: 'POST', body: JSON.stringify({ text: input }) });
+      // כאן אנחנו מעבירים ל-AI את רשימת הקטגוריות כדי שלא ימציא!
+      const res = await fetch('/api/parse', { 
+        method: 'POST', 
+        body: JSON.stringify({ text: input, categories: categories }) 
+      });
       const data = await res.json();
       
-      // 1. יצירת קטגוריות חדשות לפני הכל
       if (data.new_categories && data.new_categories.length > 0) {
         for (const nc of data.new_categories) {
           if (!categories.includes(nc)) {
@@ -115,15 +125,13 @@ export default function HomePage() {
         showStatus('✅ קטגוריה נוספה!', true);
       }
 
-      // 2. טיפול במוצרים
       if (data.items && data.items.length > 0) {
         const certainItems = [];
         const uncertainItems = [];
 
         for (const item of data.items) {
           const cat = (item.category || '').toLowerCase();
-          // לוכד כל בעיה בסיווג כדי לשלוח למשתמש לשאלה
-          if (item.needs_classification || cat === 'uncertain' || cat === 'לא ידוע') {
+          if (item.needs_classification || cat === 'uncertain' || cat === 'לא ידוע' || cat === 'null') {
             uncertainItems.push(item);
           } else {
             certainItems.push(item);
@@ -131,7 +139,7 @@ export default function HomePage() {
         }
 
         for (const item of certainItems) {
-          await saveItemToDB(item, activeView);
+          await saveItemWithCategory(item);
         }
         
         if (uncertainItems.length > 0) {
@@ -148,7 +156,7 @@ export default function HomePage() {
 
   const handleResolvePending = async (item: Item, selectedCategory: string) => {
     setPendingItems(prev => prev.filter(p => p.item_name !== item.item_name)); 
-    await saveItemToDB({...item, category: selectedCategory}, activeView);
+    await saveItemWithCategory({...item, category: selectedCategory});
     if (pendingItems.length <= 1) showStatus('✅ עודכן!', true);
   };
 
@@ -226,7 +234,7 @@ export default function HomePage() {
     ...categories, 
     ...safeInventory.map(i => i.category || 'כללי'), 
     ...safeShoppingList.map(s => s.category || 'כללי')
-  ]));
+  ])).filter(c => c !== 'uncertain' && c !== 'null'); // מונע הצגה של קטגוריות רפאים
 
   const activeTasks = tasks.filter(t => t.status !== 'סיימתי');
   const completedTasks = tasks.filter(t => t.status === 'סיימתי');
@@ -268,7 +276,7 @@ export default function HomePage() {
 
       <div className="max-w-2xl mx-auto p-4 relative z-10">
         
-        {/* אזור התראות סיווג לקטגוריות - פועל עכשיו גם במלאי וגם בקניות! */}
+        {/* קופסאות שאלות סיווג למלאי ולקניות */}
         {pendingItems.length > 0 && (activeView === 'INVENTORY' || activeView === 'SHOPPING') && (
           <div className="mb-8 space-y-4">
             {pendingItems.map((item, idx) => (
@@ -279,7 +287,7 @@ export default function HomePage() {
                 onResolve={handleResolvePending} 
                 onIgnore={() => {
                   setPendingItems(prev => prev.filter(p => p.item_name !== item.item_name));
-                  if (pendingItems.length <= 1) showStatus('✅ מעודכן!', true);
+                  if (pendingItems.length <= 1) showStatus('✅ נשמר ב"כללי"', true);
                 }}
               />
             ))}
@@ -429,7 +437,7 @@ export default function HomePage() {
                   </select>
                 </div>
                 <input type="date" className="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold" value={newTask.target_date} onChange={e => setNewTask({...newTask, target_date: e.target.value})} />
-                <button type="submit" className="w-full bg-emerald-500 text-white p-5 rounded-2xl font-black shadow-md">שמור ושלח לוואטסאפ</button>
+                <button type="submit" className="w-full bg-emerald-500 text-white p-5 rounded-2xl font-black shadow-md">שמור ושלח לוואטסאפ 💬</button>
               </form>
             )}
 
@@ -476,13 +484,13 @@ export default function HomePage() {
 
 function ClassificationCard({ item, categories, onResolve, onIgnore }: any) {
   const [customCat, setCustomCat] = useState('');
-  const quickOptions = Array.from(new Set([...categories, 'טרי', 'קפואים', 'שימורים', 'יבשים'])).slice(0, 5);
+  const quickOptions = Array.from(new Set([...categories, 'טרי', 'קפואים', 'שימורים', 'יבשים'])).filter(c => c !== 'uncertain' && c !== 'null' && c !== 'כללי').slice(0, 5);
 
   return (
     <div className="bg-white p-5 rounded-3xl shadow-sm border border-amber-100">
       <div className="flex justify-between items-center mb-3">
-        <p className="font-black text-lg text-slate-800">איך לסווג: <span className="text-amber-600">{item.item_name || item.name}</span>?</p>
-        <button onClick={onIgnore} className="text-slate-400 hover:text-slate-600 text-xs font-bold bg-slate-100 px-3 py-1 rounded-full">התעלם</button>
+        <p className="font-black text-lg text-slate-800">איפה נשמור: <span className="text-amber-600">{item.item_name || item.name}</span>?</p>
+        <button onClick={onIgnore} className="text-slate-400 hover:text-slate-600 text-xs font-bold bg-slate-100 px-3 py-1 rounded-full">לשמור בכללי</button>
       </div>
       <div className="flex flex-wrap gap-2 mb-4">
         {quickOptions.map(opt => (
@@ -500,7 +508,8 @@ function ClassificationCard({ item, categories, onResolve, onIgnore }: any) {
           onKeyDown={(e) => e.key === 'Enter' && customCat && onResolve(item, customCat)}
         />
         <button 
-          onClick={() => customCat && onResolve(item, customCat)} 
+          type="button"
+          onClick={(e) => { e.preventDefault(); if(customCat) onResolve(item, customCat); }} 
           className={`px-4 py-2 rounded-xl font-black text-sm transition-all ${customCat ? 'bg-amber-400 text-amber-900 shadow-md' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
         >
           שמור
@@ -522,8 +531,8 @@ function CompletedTaskCard({ task, onRestore, onDelete }: any) {
       <div className="mt-4 pt-4 border-t border-slate-200 flex flex-col gap-2">
         <label className="text-[10px] font-black text-slate-400">תאריך יעד חדש לשחזור:</label>
         <div className="flex gap-2">
-          <input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} className="flex-1 p-2 rounded-xl text-xs font-black bg-white border border-slate-200" />
-          <button onClick={() => onRestore(task.id!, newDate)} className="bg-slate-200 text-slate-700 px-4 py-2 rounded-xl text-[10px] font-black shadow-sm hover:bg-slate-300 transition-colors">שחזר ↺</button>
+          <input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} className="flex-1 p-2 rounded-xl text-xs font-black bg-white border border-slate-200 pointer-events-auto" />
+          <button onClick={() => onRestore(task.id!, newDate)} className="bg-slate-200 text-slate-700 px-4 py-2 rounded-xl text-[10px] font-black shadow-sm hover:bg-slate-300 transition-colors pointer-events-auto">שחזר ↺</button>
         </div>
       </div>
     </div>
