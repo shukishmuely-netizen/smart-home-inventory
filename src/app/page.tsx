@@ -2,20 +2,23 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 
-type Item = { id?: string; item_name: string; quantity: number; category: string; location: string; uncertain?: boolean; options?: string[] };
+type Item = { id?: string; item_name: string; name?: string; quantity: number; category: string; location: string; needs_classification?: boolean };
 type Task = { id?: string; title: string; description?: string; urgency: string; assignee: string; target_date: string; status: string };
 
 export default function HomePage() {
   const today = new Date().toISOString().split('T')[0];
+
   const [activeView, setActiveView] = useState<'HOME' | 'INVENTORY' | 'SHOPPING' | 'TASKS'>('HOME');
   const [invFilter, setInvFilter] = useState<'מקרר' | 'מזווה' | 'הכל'>('הכל');
   const [sortBy, setSortBy] = useState<'name' | 'category'>('name');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false); 
+  
   const [inventory, setInventory] = useState<Item[]>([]);
   const [shoppingList, setShoppingList] = useState<any[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  
   const [input, setInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [status, setStatus] = useState('');
@@ -29,6 +32,7 @@ export default function HomePage() {
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState('');
+
   const statusTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const showStatus = (msg: string, autoClear: boolean = false) => {
@@ -37,22 +41,22 @@ export default function HomePage() {
     if (autoClear) statusTimeoutRef.current = setTimeout(() => setStatus(''), 4000);
   };
 
+  // 🔥 אופטימיזציית ביצועים: טעינה מקבילית מטורפת לחוויה חלקה יותר
   const fetchData = async () => {
-    const { data: inv } = await supabase.from('inventory_items').select('*');
-    const { data: shop } = await supabase.from('shopping_list').select('*');
-    const { data: cats } = await supabase.from('category_order').select('category_name').order('sort_order');
-    const { data: tsk } = await supabase.from('tasks').select('*').order('created_at', { ascending: false });
+    const [invRes, shopRes, catsRes, tskRes] = await Promise.all([
+      supabase.from('inventory_items').select('*'),
+      supabase.from('shopping_list').select('*'),
+      supabase.from('category_order').select('category_name').order('sort_order'),
+      supabase.from('tasks').select('*').order('created_at', { ascending: false })
+    ]);
     
-    if (inv) setInventory(inv);
-    if (shop) setShoppingList(shop);
-    if (cats) setCategories(cats.map(c => c.category_name));
-    if (tsk) setTasks(tsk);
+    if (invRes.data) setInventory(invRes.data);
+    if (shopRes.data) setShoppingList(shopRes.data);
+    if (catsRes.data) setCategories(catsRes.data.map(c => c.category_name));
+    if (tskRes.data) setTasks(tskRes.data);
   };
 
   useEffect(() => { fetchData(); }, []);
-
-  // הפונקציה שהייתה חסרה!
-  const handleRefresh = () => window.location.reload();
 
   const changeView = (view: typeof activeView) => {
     setActiveView(view); setIsMenuOpen(false); setIsSearchOpen(false); setSearchTerm('');
@@ -61,18 +65,13 @@ export default function HomePage() {
   const updateExactQuantity = (item: Item, newQty: number) => {
     setInventory(prev => prev.map(i => i.id === item.id ? { ...i, quantity: newQty } : i));
     supabase.from('inventory_items').update({ quantity: newQty }).eq('id', item.id).then();
-    
-    const alreadyInShopping = shoppingList.some(s => s.item_name === item.item_name);
-    if (newQty <= 2 && newQty < item.quantity && !alreadyInShopping) {
-      setLowStockAlerts(prev => [...prev.filter(i => i.item_name !== item.item_name), { ...item, quantity: newQty }]);
-    }
   };
 
   const handlePlus = (item: Item) => updateExactQuantity(item, item.quantity + 1);
   const handleMinus = (item: Item) => updateExactQuantity(item, Math.max(0, item.quantity - 1));
 
   const saveItemAI = async (item: Item) => {
-    const name = item.item_name || (item as any).name || 'פריט לא ידוע';
+    const name = item.item_name || item.name || 'פריט לא ידוע';
     let existing = inventory.find(i => i.item_name === name);
     if (existing) {
       const newQty = Math.max(0, existing.quantity + (item.quantity || 1));
@@ -87,37 +86,76 @@ export default function HomePage() {
     e.preventDefault();
     if (!input.trim()) return;
     showStatus('מעבד...', false);
+    
     try {
       const res = await fetch('/api/parse', { method: 'POST', body: JSON.stringify({ text: input }) });
       const data = await res.json();
-      if (activeView === 'SHOPPING') {
+      
+      // הוספת קטגוריות חדשות אם ה-AI זיהה בקשה מפורשת לכך
+      if (data.new_categories && data.new_categories.length > 0) {
+        for (const newCat of data.new_categories) {
+          if (!categories.includes(newCat)) {
+            await supabase.from('category_order').insert([{ category_name: newCat, sort_order: 99 }]);
+            setCategories(prev => [...prev, newCat]);
+          }
+        }
+        showStatus(`✅ קטגוריות נוספו!`, true);
+      }
+
+      if (activeView === 'SHOPPING' && data.items) {
         for (const item of data.items) {
            const finalName = item.quantity > 1 ? `${item.name || 'פריט'} (${item.quantity})` : (item.name || 'פריט');
            await supabase.from('shopping_list').insert([{ item_name: finalName, category: item.category || 'כללי' }]);
         }
         showStatus('✅ נוסף לקניות!', true);
-      } else {
+      } else if (data.items) {
         const certainItems = [];
-        const uncertainItems = [];
+        const itemsNeedingClassification = [];
+
         for (const item of data.items) {
           const name = item.name || item.item_name || 'פריט';
           const isRemoval = (item.quantity || 0) < 0; 
-          if (item.uncertain && isRemoval) {
+
+          if (item.needs_classification && isRemoval) {
             const matches = inventory.filter(i => (i.item_name || '').includes(name));
-            if (matches.length === 1) certainItems.push({ ...item, uncertain: false, item_name: matches[0].item_name, name: matches[0].item_name, category: matches[0].category, location: matches[0].location });
-            else if (matches.length > 1) uncertainItems.push({ ...item, options: Array.from(new Set(matches.map(m => m.category || 'כללי'))) });
-            else certainItems.push({ ...item, uncertain: false });
-          } else if (item.uncertain) uncertainItems.push(item);
-          else certainItems.push(item);
+            if (matches.length === 1) certainItems.push({ ...item, needs_classification: false, item_name: matches[0].item_name, category: matches[0].category, location: matches[0].location });
+            else certainItems.push({ ...item, needs_classification: false });
+          } else if (item.needs_classification) {
+            itemsNeedingClassification.push(item);
+          } else {
+            certainItems.push(item);
+          }
         }
+
         for (const item of certainItems) await saveItemAI(item);
-        if (uncertainItems.length > 0) {
-          setPendingItems(uncertainItems.map((i: any) => ({ ...i, item_name: i.name || i.item_name || 'פריט' })));
-          showStatus(`🤔 נדרש סיווג`, false); 
-        } else showStatus('✅ עודכן!', true);
+        
+        if (itemsNeedingClassification.length > 0) {
+          setPendingItems(itemsNeedingClassification.map((i: any) => ({ ...i, item_name: i.name || i.item_name || 'פריט' })));
+          showStatus(`🤔 נדרש סיווג לחלק מהפריטים`, false); 
+        } else if (data.items.length > 0) {
+          showStatus('✅ עודכן!', true);
+        }
       }
-      setInput(''); fetchData();
-    } catch { showStatus('❌ שגיאה', true); }
+      setInput(''); 
+      fetchData();
+    } catch { showStatus('❌ שגיאה בחיבור', true); }
+  };
+
+  // שמירה של פריט אחרי סיווג (כולל יצירת קטגוריה חדשה אם הוקלדה בטקסט חופשי)
+  const handleResolvePending = async (item: Item, selectedCategory: string) => {
+    const isFridge = ['קפואים', 'קירור', 'טרי', 'מוצרי חלב', 'בשר'].some(c => selectedCategory.includes(c));
+    const location = isFridge ? 'מקרר' : 'מזווה';
+
+    // אם זו קטגוריה חדשה לחלוטין שלא קיימת, נוסיף אותה למסד הנתונים
+    if (!categories.includes(selectedCategory)) {
+      await supabase.from('category_order').insert([{ category_name: selectedCategory, sort_order: 99 }]);
+      setCategories(prev => [...prev, selectedCategory]);
+    }
+
+    setPendingItems(prev => prev.filter(p => p.item_name !== item.item_name)); 
+    await saveItemAI({...item, category: selectedCategory, location});
+    
+    if (pendingItems.length <= 1) showStatus('✅ המלאי עודכן!', true);
   };
 
   const addToShopping = async (item: Item) => {
@@ -209,7 +247,7 @@ export default function HomePage() {
             <h1 className="text-2xl font-black cursor-pointer drop-shadow-md" onClick={() => changeView('HOME')}>הבית של ניאו 🏠</h1>
             <div className="flex items-center gap-2">
               {activeView !== 'HOME' && <button onClick={() => setIsSearchOpen(!isSearchOpen)} className="p-2 rounded-xl bg-black/10 hover:bg-black/20 font-black flex items-center justify-center text-lg" title="חפש">🔍</button>}
-              <button onClick={handleRefresh} className="p-2 rounded-xl bg-black/10 hover:bg-black/20 font-black flex items-center justify-center text-lg" title="רענן עמוד">🔄</button>
+              <button onClick={() => window.location.reload()} className="p-2 rounded-xl bg-black/10 hover:bg-black/20 font-black flex items-center justify-center text-lg" title="רענן עמוד">🔄</button>
               <div className="relative">
                 <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="px-3 py-2 rounded-xl bg-black/20 hover:bg-black/30 font-bold tracking-wide shadow-inner flex items-center gap-2">
                   <span>☰</span> תפריט
@@ -262,7 +300,7 @@ export default function HomePage() {
         {(activeView === 'INVENTORY' || activeView === 'SHOPPING') && (
           <div className="bg-white p-5 rounded-[2rem] shadow-xl mb-6 border border-slate-50 relative z-20">
             <form onSubmit={handleUpdate} className="space-y-3">
-              <textarea value={input} onChange={e => setInput(e.target.value)} placeholder={activeView === 'INVENTORY' ? "מה הוספנו/הורדנו מהמלאי?" : "מה חסר?"} className="w-full p-4 bg-slate-50 rounded-2xl text-sm min-h-[70px] border-none focus:ring-2 focus:ring-amber-300 pointer-events-auto" />
+              <textarea value={input} onChange={e => setInput(e.target.value)} placeholder={activeView === 'INVENTORY' ? "מה הוספנו/הורדנו מהמלאי? (למשל: תוריד 2 חלב, הוסף קטגוריית טיפוח)" : "מה חסר? (למשל: עגבניות, 3 קולה)"} className="w-full p-4 bg-slate-50 rounded-2xl text-sm min-h-[70px] border-none focus:ring-2 focus:ring-amber-300 pointer-events-auto" />
               <button type="submit" className={`w-full p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto ${activeView === 'INVENTORY' ? 'bg-teal-600 hover:bg-teal-700' : 'bg-rose-600 hover:bg-rose-700'}`}>
                  {activeView === 'INVENTORY' ? 'עדכן מלאי ✨' : 'הוסף לקניות 🛒'}
               </button>
@@ -279,28 +317,18 @@ export default function HomePage() {
           <div className="mb-8 p-6 bg-amber-50 rounded-[2rem] border-2 border-amber-300 shadow-md">
             <h3 className="font-black text-amber-900 mb-4">🤔 שאלות סיווג:</h3>
             <div className="space-y-4">
-              {pendingItems.map((item, idx) => {
-                const options = (item.options && item.options.length > 0) ? item.options : ['טרי', 'קפואים', 'שימורים', 'יבשים'];
-                return (
-                  <div key={idx} className="bg-white p-4 rounded-2xl shadow-sm border border-amber-100">
-                    <p className="font-bold mb-3 text-slate-800">איך לסווג את "{item.item_name}"?</p>
-                    <div className="flex flex-wrap gap-2">
-                      {options.map(opt => (
-                        <button key={opt} onClick={async () => {
-                          const isFridge = ['קפואים', 'קירור', 'טרי'].includes(opt);
-                          setPendingItems(prev => prev.filter(p => p.item_name !== item.item_name)); 
-                          await saveItemAI({...item, category: opt, location: isFridge ? 'מקרר' : 'מזווה'});
-                          if (pendingItems.length <= 1) showStatus('✅ המלאי עודכן!', true);
-                        }} className="bg-amber-100 hover:bg-amber-400 hover:text-amber-900 text-amber-800 px-4 py-2 rounded-xl font-bold text-sm transition-all pointer-events-auto">{opt}</button>
-                      ))}
-                      <button onClick={() => {
-                        setPendingItems(prev => prev.filter(p => p.item_name !== item.item_name));
-                        if (pendingItems.length <= 1) showStatus('✅ המלאי עודכן!', true);
-                      }} className="text-slate-400 text-xs px-2 pointer-events-auto">התעלם</button>
-                    </div>
-                  </div>
-                );
-              })}
+              {pendingItems.map((item, idx) => (
+                <ClassificationCard 
+                  key={idx} 
+                  item={item} 
+                  categories={categories} 
+                  onResolve={handleResolvePending} 
+                  onIgnore={() => {
+                    setPendingItems(prev => prev.filter(p => p.item_name !== item.item_name));
+                    if (pendingItems.length <= 1) showStatus('✅ המלאי עודכן!', true);
+                  }}
+                />
+              ))}
             </div>
           </div>
         )}
@@ -419,12 +447,7 @@ export default function HomePage() {
                   <div key={task.id} className={`bg-white p-6 rounded-[2rem] shadow-md border-r-8 ${urgencyColor} relative group`}>
                     <div className="flex justify-between items-start gap-4 mb-2">
                       <h3 className="font-black text-xl text-slate-800 flex-1">{task.title}</h3>
-                      <button 
-                        onClick={() => deleteTask(task.id!)} 
-                        className="px-3 py-1.5 rounded-xl bg-slate-50 text-slate-400 text-[10px] font-black border border-slate-100 hover:bg-red-50 hover:text-red-600 hover:border-red-100 transition-all pointer-events-auto"
-                      >
-                        מחק 🗑️
-                      </button>
+                      <button onClick={() => deleteTask(task.id!)} className="px-3 py-1.5 rounded-xl bg-slate-50 text-slate-400 text-[10px] font-black border border-slate-100 hover:bg-red-50 hover:text-red-600 hover:border-red-100 transition-all pointer-events-auto">מחק 🗑️</button>
                     </div>
                     {task.description && <p className="text-sm text-slate-500 mb-4">{task.description}</p>}
                     <div className="flex flex-wrap gap-2 text-[10px] font-black text-slate-400">
@@ -432,26 +455,10 @@ export default function HomePage() {
                       <span className="bg-slate-50 px-2 py-1 rounded-full">📅 {task.target_date}</span>
                       <span className="bg-slate-50 px-2 py-1 rounded-full">🔥 {task.urgency}</span>
                     </div>
-                    
                     <div className="flex bg-slate-100 p-1 rounded-2xl mt-5 gap-1">
-                      <button 
-                        onClick={() => updateTaskStatus(task.id!, 'לא התחלתי')} 
-                        className={`flex-1 py-2.5 rounded-xl text-[11px] font-black transition-all ${task.status === 'לא התחלתי' || !task.status ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-400'}`}
-                      >
-                        {isPlural ? 'לא התחלנו' : 'לא התחלתי'}
-                      </button>
-                      <button 
-                        onClick={() => updateTaskStatus(task.id!, 'בתהליך')} 
-                        className={`flex-1 py-2.5 rounded-xl text-[11px] font-black transition-all ${task.status === 'בתהליך' ? 'bg-blue-500 text-white shadow-sm' : 'text-slate-400'}`}
-                      >
-                        בתהליך
-                      </button>
-                      <button 
-                        onClick={() => updateTaskStatus(task.id!, 'סיימתי')} 
-                        className="flex-1 py-2.5 rounded-xl text-[11px] font-black text-slate-400 hover:bg-emerald-500 hover:text-white transition-all"
-                      >
-                        {isPlural ? 'סיימנו' : 'סיימתי'}
-                      </button>
+                      <button onClick={() => updateTaskStatus(task.id!, 'לא התחלתי')} className={`flex-1 py-2.5 rounded-xl text-[11px] font-black transition-all ${task.status === 'לא התחלתי' || !task.status ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-400'}`}>{isPlural ? 'לא התחלנו' : 'לא התחלתי'}</button>
+                      <button onClick={() => updateTaskStatus(task.id!, 'בתהליך')} className={`flex-1 py-2.5 rounded-xl text-[11px] font-black transition-all ${task.status === 'בתהליך' ? 'bg-blue-500 text-white shadow-sm' : 'text-slate-400'}`}>בתהליך</button>
+                      <button onClick={() => updateTaskStatus(task.id!, 'סיימתי')} className="flex-1 py-2.5 rounded-xl text-[11px] font-black text-slate-400 hover:bg-emerald-500 hover:text-white transition-all">{isPlural ? 'סיימנו' : 'סיימתי'}</button>
                     </div>
                   </div>
                 );
@@ -462,9 +469,7 @@ export default function HomePage() {
               <div className="mt-16 pt-8 border-t-2 border-slate-200">
                 <h3 className="font-black text-slate-400 text-sm uppercase mb-6 pr-2">✅ משימות שהסתיימו:</h3>
                 <div className="space-y-4 opacity-70 hover:opacity-100 transition-opacity">
-                  {completedTasks.map(task => (
-                     <CompletedTaskCard key={task.id} task={task} onRestore={handleRestoreTask} onDelete={deleteTask} />
-                  ))}
+                  {completedTasks.map(task => <CompletedTaskCard key={task.id} task={task} onRestore={handleRestoreTask} onDelete={deleteTask} />)}
                 </div>
               </div>
             )}
@@ -472,6 +477,46 @@ export default function HomePage() {
         )}
       </div>
     </main>
+  );
+}
+
+// כרטיסיית הסיווג החכמה - תומכת בטקסט חופשי ליצירת קטגוריה חדשה לחלוטין!
+function ClassificationCard({ item, categories, onResolve, onIgnore }: any) {
+  const [customCat, setCustomCat] = useState('');
+  // נציג כמה אופציות נפוצות, ואז ניתן לו לכתוב מה שבא לו
+  const quickOptions = Array.from(new Set([...categories, 'טרי', 'קפואים', 'שימורים', 'יבשים'])).slice(0, 5);
+
+  return (
+    <div className="bg-white p-5 rounded-3xl shadow-sm border border-amber-100">
+      <div className="flex justify-between items-center mb-3">
+        <p className="font-black text-lg text-slate-800">איך לסווג: <span className="text-amber-600">{item.item_name}</span>?</p>
+        <button onClick={onIgnore} className="text-slate-400 hover:text-slate-600 text-xs font-bold bg-slate-100 px-3 py-1 rounded-full">התעלם</button>
+      </div>
+      
+      <div className="flex flex-wrap gap-2 mb-4">
+        {quickOptions.map(opt => (
+          <button key={opt} onClick={() => onResolve(item, opt)} className="bg-amber-50 hover:bg-amber-400 hover:text-amber-900 text-amber-700 px-4 py-2 rounded-xl font-bold text-sm transition-all shadow-sm border border-amber-100">
+            {opt}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex gap-2 bg-slate-50 p-2 rounded-2xl border border-slate-100 focus-within:border-amber-300 focus-within:ring-2 focus-within:ring-amber-100 transition-all">
+        <input 
+          value={customCat} 
+          onChange={e => setCustomCat(e.target.value)} 
+          placeholder="או הקלד קטגוריה חדשה..." 
+          className="flex-1 bg-transparent px-2 outline-none font-bold text-sm text-slate-700" 
+          onKeyDown={(e) => e.key === 'Enter' && customCat && onResolve(item, customCat)}
+        />
+        <button 
+          onClick={() => customCat && onResolve(item, customCat)} 
+          className={`px-4 py-2 rounded-xl font-black text-sm transition-all ${customCat ? 'bg-amber-400 text-amber-900 shadow-md' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
+        >
+          שמור
+        </button>
+      </div>
+    </div>
   );
 }
 

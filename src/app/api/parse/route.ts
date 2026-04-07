@@ -6,25 +6,22 @@ export async function POST(request: NextRequest) {
     const { text } = await request.json();
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
-    // Explicit prompt to improve intent classification and handle summing of identical items.
-    const prompt = `You are a kitchen inventory parsing expert. Analyze this list: "${text}"
+    const prompt = `You are a smart home kitchen inventory AI. Analyze the following user input in Hebrew: "${text}"
 
-    CRITICAL INTENT RULES (FIXED):
-    - Identify if the user's primary intent is adding items to inventory OR removing items from inventory.
-    - If words imply addition (הוסף, קניתי, +, קנינו, הוספנו), intent is "add". Quantities are positive.
-    - If words imply removal (תוריד, נגמר, -, הורדתי, סיימנו), intent is "remove".
-    - IF INTENT IS "REMOVE", QUANTITIES MUST BE NEGATIVE by multiplying them by -1. For example, "Remove 1 corn" must be interpreted as adding -1 quantity of corn.
+    RULES:
+    1. INTENT: Is the user adding items, removing items, or explicitly creating new categories?
+    2. QUANTITIES: If removing/using items (e.g., "תוריד", "נגמר"), make the quantity NEGATIVE (e.g. -1). If adding, positive. Sum duplicate items.
+    3. CATEGORIES: Extract the EXACT category if the user specifies one (e.g., "תוסיף חומוס בשימורים" -> item: חומוס, category: שימורים).
+    4. UNKNOWN CATEGORIES: If the user doesn't specify a category and you are completely unsure what standard category fits best, set "needs_classification": true. DO NOT use words like "uncertain". Try to guess standard categories first (e.g., חלב -> מוצרי חלב).
+    5. NEW CATEGORIES: If the user explicitly asks to create a new category (e.g., "תוסיף קטגוריה קירור"), return it in the "new_categories" array.
 
-    SUMMING RULES:
-    - If multiple entries for the exact same item name are mentioned, you MUST SUM their quantities. For example, if the input is "Remove 1 corn, and remove another 2 corn," the final corn quantity is -1 + -2 = -3. You must return ONE entry for "corn" with quantity -3.
-
-    FORMAT RULES:
-    - CATEGORIES: ["טרי", "קפואים", "שימורים", "יבשים", "רטבים/תבלינים", "ניקיון", "אחר"]
-    - LOCATIONS: ["מקרר", "מזווה"]
-    - If unclear state, set "uncertain": true and generate options: ["טרי", "קפואים", "שימורים", "יבשים"].
-    - Sum quantities as described above. Item names are required.
-
-    Format: { "items": [{ "name": string, "quantity": number, "category": string, "location": string, "uncertain": boolean, "options": string[] }] }`;
+    Return JSON format ONLY exactly like this:
+    {
+      "items": [
+        { "name": "string", "quantity": 1, "category": "string | null", "location": "מקרר או מזווה", "needs_classification": boolean }
+      ],
+      "new_categories": ["string"]
+    }`;
 
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
@@ -33,11 +30,7 @@ export async function POST(request: NextRequest) {
       temperature: 0,
     });
 
-    const parsedData = JSON.parse(response.choices[0].message.content || '{"items":[]}');
-    
-    // Debug logging in Vercel to see the actual AI output.
-    console.log("AI Parsed Data for intent logic debug:", parsedData);
-
+    const parsedData = JSON.parse(response.choices[0].message.content || '{"items":[], "new_categories":[]}');
     return NextResponse.json(parsedData);
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
