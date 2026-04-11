@@ -147,10 +147,16 @@ export default function HomePage() {
           const isRemoval = (item.quantity || 0) < 0 || item.removeAll;
           const cat = (item.category || '').toLowerCase();
 
-          // לוגיקת המחיקה החדשה: חיפוש וסיווג כפילויות
+          // לוגיקת המחיקה: חיפוש עם ניקוי תחיליות עבריות וסיווג כפילויות
           if (activeView === 'INVENTORY' && isRemoval) {
-            const matches = inventory.filter(i => (i.item_name || '').toLowerCase().includes(name.toLowerCase()));
-            if (matches.length === 1) {
+            const cleanName = name.replace(/^(את כל ה|כל ה|את ה|)/g, '').trim().toLowerCase();
+            const matches = inventory.filter(i => (i.item_name || '').toLowerCase().includes(cleanName));
+            // אם יש התאמה מדויקת אחת בלבד - בצע ישירות
+            const exactMatch = matches.find(i => (i.item_name || '').toLowerCase() === cleanName);
+            if (exactMatch && matches.length > 1) {
+              // יש התאמה מדויקת אבל גם אחרות - שאל את המשתמש
+              ambiguousRemovals.push({ originalName: name, matches, quantityToSubtract: item.quantity, removeAll: item.removeAll });
+            } else if (matches.length === 1) {
               await executeRemoval(matches[0], item.quantity, item.removeAll);
             } else if (matches.length > 1) {
               ambiguousRemovals.push({ originalName: name, matches, quantityToSubtract: item.quantity, removeAll: item.removeAll });
@@ -356,7 +362,7 @@ export default function HomePage() {
                 </div>
                 <div className="flex gap-2 border-t border-rose-200 pt-4">
                   <button onClick={() => handleResolveDisambiguation(task, 'ALL')} className="flex-1 bg-rose-600 text-white px-4 py-3 rounded-xl font-black text-sm shadow-sm hover:bg-rose-700 transition-all">
-                    {task.removeAll ? "אפס את כולם ל-0" : `הורד ${Math.abs(task.quantityToSubtract)} מכל אחד`}
+                    🔄 הכל — {task.removeAll ? "אפס את כולם ל-0" : `הורד ${Math.abs(task.quantityToSubtract)} מכל אחד`}
                   </button>
                   <button onClick={() => setDisambiguationItems(prev => prev.filter(t => t !== task))} className="bg-slate-200 text-slate-500 px-4 py-3 rounded-xl font-bold text-sm shadow-sm hover:bg-slate-300 transition-all">
                     ביטול

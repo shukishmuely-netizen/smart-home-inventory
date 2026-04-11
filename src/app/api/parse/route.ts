@@ -16,10 +16,12 @@ export async function POST(request: NextRequest) {
     1. CATEGORY ASSIGNMENT: Assign items ONLY to the EXACT EXISTING CATEGORIES. Do NOT invent categories.
     2. FORCE CLASSIFICATION: If adding an item and you are unsure of the category, set "needs_classification": true and "category": null.
     3. EXPLICIT NEW CATEGORY: ONLY if the user says "תוסיף קטגוריה X" or "X בקירור" (explicitly naming a new category), add it to "new_categories".
-    4. QUANTITIES & REMOVAL: 
+    4. QUANTITIES & REMOVAL:
        - If adding, use positive numbers.
        - If removing/using ("תוריד", "לקחתי"), use negative numbers (e.g., -1).
-       - IF THE USER SAYS TO REMOVE "ALL" ("את כל ה", "נגמר", "לרוקן", "לאפס"), set "removeAll": true. Otherwise "removeAll": false.
+       - IF THE USER SAYS TO REMOVE "ALL" ("את כל ה", "נגמר", "לרוקן", "לאפס"), set "removeAll": true AND "quantity": 0. Otherwise "removeAll": false.
+    5. ITEM NAME MUST BE CLEAN: Return ONLY the product name itself. Strip prefixes like "את כל ה", "את ה", "כל ה", "הרבה", etc.
+       For example: "תוריד את כל המיונז" → name: "מיונז", removeAll: true. "נגמר לי הקפה" → name: "קפה", removeAll: true.
 
     Output JSON ONLY:
     {
