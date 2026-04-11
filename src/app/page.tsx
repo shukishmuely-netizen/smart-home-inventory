@@ -2,8 +2,10 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 
-type Item = { id?: string; item_name: string; name?: string; quantity: number; category: string; location: string; needs_classification?: boolean; options?: string[] };
+type Item = { id?: string; item_name: string; name?: string; quantity: number; category: string; location: string; needs_classification?: boolean; options?: string[]; removeAll?: boolean };
 type Task = { id?: string; title: string; description?: string; urgency: string; assignee: string; target_date: string; status: string };
+
+type DisambiguationTask = { originalName: string; matches: Item[]; quantityToSubtract: number; removeAll: boolean; };
 
 export default function HomePage() {
   const today = new Date().toISOString().split('T')[0];
@@ -20,6 +22,7 @@ export default function HomePage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [status, setStatus] = useState('');
   const [pendingItems, setPendingItems] = useState<Item[]>([]);
+  const [disambiguationItems, setDisambiguationItems] = useState<DisambiguationTask[]>([]);
   const [lowStockAlerts, setLowStockAlerts] = useState<Item[]>([]);
   const [removedItems, setRemovedItems] = useState<any[]>([]);
 
@@ -68,18 +71,32 @@ export default function HomePage() {
     setActiveView(view); setIsMenuOpen(false); setIsSearchOpen(false); setSearchTerm('');
   };
 
-  const updateExactQuantity = (item: Item, newQty: number) => {
-    setInventory(prev => prev.map(i => i.id === item.id ? { ...i, quantity: newQty } : i));
-    supabase.from('inventory_items').update({ quantity: newQty }).eq('id', item.id).then();
+  const updateExactQuantity = async (item: Item, newQty: number) => {
+    const finalQty = Math.max(0, newQty);
+    setInventory(prev => prev.map(i => i.id === item.id ? { ...i, quantity: finalQty } : i));
+    await supabase.from('inventory_items').update({ quantity: finalQty }).eq('id', item.id);
+    
+    if (finalQty <= 2 && finalQty < item.quantity) {
+      const alreadyInShopping = shoppingList.some(s => s.item_name === item.item_name);
+      if (!alreadyInShopping) {
+        setLowStockAlerts(prev => [...prev.filter(i => i.item_name !== item.item_name), { ...item, quantity: finalQty }]);
+      }
+    }
   };
 
   const handlePlus = (item: Item) => updateExactQuantity(item, item.quantity + 1);
-  const handleMinus = (item: Item) => updateExactQuantity(item, Math.max(0, item.quantity - 1));
+  const handleMinus = (item: Item) => updateExactQuantity(item, item.quantity - 1);
+
+  const executeRemoval = async (invItem: Item, qtyToSubtract: number, removeAll: boolean) => {
+    const newQty = removeAll ? 0 : invItem.quantity + qtyToSubtract; // qtyToSubtract is negative
+    await updateExactQuantity(invItem, newQty);
+  };
 
   const saveItemWithCategory = async (item: any) => {
     const name = item.name || item.item_name || 'פריט לא ידוע';
     let cat = item.category || 'כללי';
-    
+    if (cat.toLowerCase() === 'uncertain' || cat === 'לא ידוע') cat = 'כללי';
+
     if (cat !== 'כללי' && !categories.includes(cat)) {
       await supabase.from('category_order').insert([{ category_name: cat, sort_order: 99 }]);
       setCategories(prev => Array.from(new Set([...prev, cat])));
@@ -108,11 +125,7 @@ export default function HomePage() {
     showStatus('מעבד...', false);
     
     try {
-      // כאן אנחנו מעבירים ל-AI את רשימת הקטגוריות כדי שלא ימציא!
-      const res = await fetch('/api/parse', { 
-        method: 'POST', 
-        body: JSON.stringify({ text: input, categories: categories }) 
-      });
+      const res = await fetch('/api/parse', { method: 'POST', body: JSON.stringify({ text: input, categories: categories }) });
       const data = await res.json();
       
       if (data.new_categories && data.new_categories.length > 0) {
@@ -122,27 +135,47 @@ export default function HomePage() {
             setCategories(prev => Array.from(new Set([...prev, nc])));
           }
         }
-        showStatus('✅ קטגוריה נוספה!', true);
       }
 
       if (data.items && data.items.length > 0) {
         const certainItems = [];
         const uncertainItems = [];
+        const ambiguousRemovals = [];
 
         for (const item of data.items) {
+          const name = item.name || item.item_name || 'פריט';
+          const isRemoval = (item.quantity || 0) < 0 || item.removeAll;
           const cat = (item.category || '').toLowerCase();
-          if (item.needs_classification || cat === 'uncertain' || cat === 'לא ידוע' || cat === 'null') {
-            uncertainItems.push(item);
-          } else {
-            certainItems.push(item);
+
+          // לוגיקת המחיקה החדשה: חיפוש וסיווג כפילויות
+          if (activeView === 'INVENTORY' && isRemoval) {
+            const matches = inventory.filter(i => (i.item_name || '').toLowerCase().includes(name.toLowerCase()));
+            if (matches.length === 1) {
+              await executeRemoval(matches[0], item.quantity, item.removeAll);
+            } else if (matches.length > 1) {
+              ambiguousRemovals.push({ originalName: name, matches, quantityToSubtract: item.quantity, removeAll: item.removeAll });
+            } else {
+              showStatus(`לא מצאתי "${name}" במלאי`, true);
+            }
+          } 
+          // הוספת פריט (רגיל)
+          else {
+            if (item.needs_classification || cat === 'uncertain' || cat === 'לא ידוע' || cat === 'null') {
+              uncertainItems.push(item);
+            } else {
+              certainItems.push(item);
+            }
           }
         }
 
-        for (const item of certainItems) {
-          await saveItemWithCategory(item);
-        }
+        // ביצוע השמירות
+        for (const item of certainItems) await saveItemWithCategory(item);
         
-        if (uncertainItems.length > 0) {
+        // עדכון סטייטים לחלונות הקופצים
+        if (ambiguousRemovals.length > 0) {
+          setDisambiguationItems(prev => [...prev, ...ambiguousRemovals]);
+          showStatus(`יש כמה אפשרויות`, false);
+        } else if (uncertainItems.length > 0) {
           setPendingItems(uncertainItems.map((i: any) => ({ ...i, item_name: i.name || i.item_name || 'פריט' })));
           showStatus(`🤔 נדרש סיווג`, false); 
         } else {
@@ -157,7 +190,19 @@ export default function HomePage() {
   const handleResolvePending = async (item: Item, selectedCategory: string) => {
     setPendingItems(prev => prev.filter(p => p.item_name !== item.item_name)); 
     await saveItemWithCategory({...item, category: selectedCategory});
-    if (pendingItems.length <= 1) showStatus('✅ עודכן!', true);
+    if (pendingItems.length <= 1 && disambiguationItems.length === 0) showStatus('✅ מעודכן!', true);
+  };
+
+  const handleResolveDisambiguation = async (task: DisambiguationTask, chosenItem: Item | 'ALL') => {
+    if (chosenItem === 'ALL') {
+      for (const match of task.matches) {
+        await executeRemoval(match, task.quantityToSubtract, task.removeAll);
+      }
+    } else {
+      await executeRemoval(chosenItem, task.quantityToSubtract, task.removeAll);
+    }
+    setDisambiguationItems(prev => prev.filter(t => t !== task));
+    if (disambiguationItems.length <= 1 && pendingItems.length === 0) showStatus('✅ המלאי עודכן!', true);
   };
 
   const addToShopping = async (item: Item) => {
@@ -234,7 +279,7 @@ export default function HomePage() {
     ...categories, 
     ...safeInventory.map(i => i.category || 'כללי'), 
     ...safeShoppingList.map(s => s.category || 'כללי')
-  ])).filter(c => c !== 'uncertain' && c !== 'null'); // מונע הצגה של קטגוריות רפאים
+  ])).filter(c => c !== 'uncertain' && c !== 'null');
 
   const activeTasks = tasks.filter(t => t.status !== 'סיימתי');
   const completedTasks = tasks.filter(t => t.status === 'סיימתי');
@@ -294,6 +339,34 @@ export default function HomePage() {
           </div>
         )}
 
+        {/* קופסאות הבהרה (Disambiguation) למחיקה של כפילויות */}
+        {disambiguationItems.length > 0 && activeView === 'INVENTORY' && (
+          <div className="mb-8 space-y-4">
+            {disambiguationItems.map((task, idx) => (
+              <div key={`dis-${idx}`} className="bg-rose-50 p-6 rounded-[2rem] border-2 border-rose-200 shadow-lg animate-bounce-short">
+                <p className="font-black text-lg mb-4 text-rose-900">
+                  יש כמה סוגים של "<span className="text-rose-600">{task.originalName}</span>" במלאי. <br/> איזה מהם להוריד?
+                </p>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {task.matches.map(match => (
+                    <button key={match.id} onClick={() => handleResolveDisambiguation(task, match)} className="bg-white px-4 py-2 rounded-xl font-bold text-sm shadow-sm border border-rose-100 hover:bg-rose-500 hover:text-white transition-all">
+                      {match.item_name} ({match.quantity})
+                    </button>
+                  ))}
+                </div>
+                <div className="flex gap-2 border-t border-rose-200 pt-4">
+                  <button onClick={() => handleResolveDisambiguation(task, 'ALL')} className="flex-1 bg-rose-600 text-white px-4 py-3 rounded-xl font-black text-sm shadow-sm hover:bg-rose-700 transition-all">
+                    {task.removeAll ? "אפס את כולם ל-0" : `הורד ${Math.abs(task.quantityToSubtract)} מכל אחד`}
+                  </button>
+                  <button onClick={() => setDisambiguationItems(prev => prev.filter(t => t !== task))} className="bg-slate-200 text-slate-500 px-4 py-3 rounded-xl font-bold text-sm shadow-sm hover:bg-slate-300 transition-all">
+                    ביטול
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {activeView === 'HOME' && (
           <div className="grid grid-cols-1 gap-4 mt-6">
             <button onClick={() => changeView('INVENTORY')} className="p-6 bg-white rounded-[2rem] shadow-lg border-b-8 border-teal-500 flex items-center justify-between active:scale-95 transition-all">
@@ -321,14 +394,14 @@ export default function HomePage() {
         {(activeView === 'INVENTORY' || activeView === 'SHOPPING') && (
           <div className="bg-white p-5 rounded-[2rem] shadow-xl mb-6 border border-slate-50 relative z-20">
             <form onSubmit={handleUpdate} className="space-y-3">
-              <textarea value={input} onChange={e => setInput(e.target.value)} placeholder={activeView === 'INVENTORY' ? "מה הוספנו/הורדנו מהמלאי? (למשל: תוריד 2 חלב, הוסף קטגוריית קירור)" : "מה חסר? (למשל: ביצים בקירור, 3 קולה)"} className="w-full p-4 bg-slate-50 rounded-2xl text-sm min-h-[70px] border-none focus:ring-2 focus:ring-amber-300 pointer-events-auto" />
+              <textarea value={input} onChange={e => setInput(e.target.value)} placeholder={activeView === 'INVENTORY' ? "מה הוספנו/הורדנו מהמלאי? (למשל: תוריד את כל המיונז)" : "מה חסר? (למשל: ביצים בקירור, 3 קולה)"} className="w-full p-4 bg-slate-50 rounded-2xl text-sm min-h-[70px] border-none focus:ring-2 focus:ring-amber-300 pointer-events-auto" />
               <button type="submit" className={`w-full p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto ${activeView === 'INVENTORY' ? 'bg-teal-600 hover:bg-teal-700' : 'bg-rose-600 hover:bg-rose-700'}`}>
                  {activeView === 'INVENTORY' ? 'עדכן מלאי ✨' : 'הוסף לקניות 🛒'}
               </button>
             </form>
             {status && (
               <div className="mt-4 flex justify-center animate-in fade-in slide-in-from-bottom-2">
-                <span className={`px-4 py-2 rounded-full text-xs font-bold shadow-sm ${status.includes('❌') ? 'bg-red-100 text-red-600' : status.includes('🤔') ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700'}`}>{status}</span>
+                <span className={`px-4 py-2 rounded-full text-xs font-bold shadow-sm ${status.includes('❌') ? 'bg-red-100 text-red-600' : status.includes('🤔') || status.includes('כמה') ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700'}`}>{status}</span>
               </div>
             )}
           </div>
