@@ -140,7 +140,7 @@ export default function HomePage() {
       if (data.items && data.items.length > 0) {
         const certainItems = [];
         const uncertainItems = [];
-        const ambiguousRemovals = [];
+        const ambiguousRemovals: DisambiguationTask[] = [];
 
         for (const item of data.items) {
           const name = item.name || item.item_name || 'פריט';
