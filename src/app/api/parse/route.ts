@@ -3,12 +3,32 @@ import OpenAI from 'openai';
 
 export async function POST(request: NextRequest) {
   try {
-    const { text, categories } = await request.json();
+    const { text, categories, context } = await request.json();
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
     const existingCats = categories && categories.length > 0 ? categories.join(", ") : "אין קטגוריות עדיין";
+    const isEquipment = context === 'equipment';
 
-    const prompt = `You are a STRICT home inventory AI. Analyze this Hebrew text: "${text}"
+    const prompt = isEquipment
+    ? `You are a packing/equipment list AI. Analyze this Hebrew text: "${text}"
+
+    EXISTING CATEGORIES: [${existingCats}]
+
+    CRITICAL RULES:
+    1. CATEGORY ASSIGNMENT: Assign items ONLY to the EXACT EXISTING CATEGORIES. Do NOT invent categories.
+    2. If you are unsure of the category, set "category": "ציוד נוסף".
+    3. QUANTITIES: If adding, use positive numbers (default 1). If removing ("תוריד", "תמחק", "הורד"), use negative numbers.
+    4. If the user explicitly names a new category ("תוסיף קטגוריה X"), add it to "new_categories".
+    5. ITEM NAME MUST BE CLEAN: Return ONLY the product name itself. Strip prefixes like "את כל ה", "את ה", "כל ה".
+
+    Output JSON ONLY:
+    {
+      "items": [
+        { "name": "string", "quantity": number, "removeAll": false, "category": "string", "location": "מזווה", "needs_classification": false }
+      ],
+      "new_categories": ["string"]
+    }`
+    : `You are a STRICT home inventory AI. Analyze this Hebrew text: "${text}"
 
     EXISTING CATEGORIES: [${existingCats}]
 

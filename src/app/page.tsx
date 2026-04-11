@@ -4,12 +4,13 @@ import { supabase } from '@/lib/supabase';
 
 type Item = { id?: string; item_name: string; name?: string; quantity: number; category: string; location: string; needs_classification?: boolean; options?: string[]; removeAll?: boolean };
 type Task = { id?: string; title: string; description?: string; urgency: string; assignee: string; target_date: string; status: string };
+type EquipmentItem = { id?: string; list_type: string; category: string; item_name: string; is_packed: boolean };
 
 type DisambiguationTask = { originalName: string; matches: Item[]; quantityToSubtract: number; removeAll: boolean; };
 
 export default function HomePage() {
   const today = new Date().toISOString().split('T')[0];
-  const [activeView, setActiveView] = useState<'HOME' | 'INVENTORY' | 'SHOPPING' | 'TASKS'>('HOME');
+  const [activeView, setActiveView] = useState<'HOME' | 'INVENTORY' | 'SHOPPING' | 'TASKS' | 'EQUIPMENT'>('HOME');
   const [invFilter, setInvFilter] = useState<'מקרר' | 'מזווה' | 'הכל'>('הכל');
   const [sortBy, setSortBy] = useState<'name' | 'category'>('name');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -25,6 +26,10 @@ export default function HomePage() {
   const [disambiguationItems, setDisambiguationItems] = useState<DisambiguationTask[]>([]);
   const [lowStockAlerts, setLowStockAlerts] = useState<Item[]>([]);
   const [removedItems, setRemovedItems] = useState<any[]>([]);
+  const [equipmentItems, setEquipmentItems] = useState<EquipmentItem[]>([]);
+  const [equipListType, setEquipListType] = useState<'חו"ל' | 'חד"כ' | 'סופ"ש'>('חו"ל');
+  const [showResetDialog, setShowResetDialog] = useState<string | null>(null);
+  const EQUIP_CATEGORIES = ['ניאו', 'חשמל', 'בגדים', 'תרופות', 'נעליים', 'ציוד נוסף'];
 
   const [newTask, setNewTask] = useState<Task>({ 
     title: '', description: '', urgency: 'סטנדרטית', assignee: 'כולם', target_date: today, status: 'לא התחלתי' 
@@ -41,11 +46,12 @@ export default function HomePage() {
   };
 
   const fetchData = async () => {
-    const [invRes, shopRes, catsRes, tskRes] = await Promise.all([
+    const [invRes, shopRes, catsRes, tskRes, equipRes] = await Promise.all([
       supabase.from('inventory_items').select('*'),
       supabase.from('shopping_list').select('*'),
       supabase.from('category_order').select('category_name').order('sort_order'),
-      supabase.from('tasks').select('*').order('created_at', { ascending: false })
+      supabase.from('tasks').select('*').order('created_at', { ascending: false }),
+      supabase.from('equipment_items').select('*')
     ]);
     
     if (invRes.data) {
@@ -61,6 +67,7 @@ export default function HomePage() {
     if (shopRes.data) setShoppingList(shopRes.data);
     if (catsRes.data) setCategories(catsRes.data.map(c => c.category_name));
     if (tskRes.data) setTasks(tskRes.data);
+    if (equipRes.data) setEquipmentItems(equipRes.data);
   };
 
   useEffect(() => { fetchData(); }, []);
@@ -270,6 +277,81 @@ export default function HomePage() {
     }
   };
 
+  // --- Equipment functions ---
+  const checkEquipmentSession = async (listType: string) => {
+    const { data } = await supabase.from('equipment_sessions').select('*').eq('list_type', listType).single();
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (data && data.last_pack_date !== todayStr) {
+      setShowResetDialog(listType);
+    }
+  };
+
+  const resetPacking = async (listType: string) => {
+    await supabase.from('equipment_items').update({ is_packed: false }).eq('list_type', listType);
+    setEquipmentItems(prev => prev.map(i => i.list_type === listType ? { ...i, is_packed: false } : i));
+    const todayStr = new Date().toISOString().split('T')[0];
+    await supabase.from('equipment_sessions').upsert({ list_type: listType, last_pack_date: todayStr, household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72' }, { onConflict: 'list_type,household_id' });
+    setShowResetDialog(null);
+  };
+
+  const dismissResetDialog = async (listType: string) => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    await supabase.from('equipment_sessions').upsert({ list_type: listType, last_pack_date: todayStr, household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72' }, { onConflict: 'list_type,household_id' });
+    setShowResetDialog(null);
+  };
+
+  const togglePacked = async (item: EquipmentItem) => {
+    const newPacked = !item.is_packed;
+    setEquipmentItems(prev => prev.map(i => i.id === item.id ? { ...i, is_packed: newPacked } : i));
+    await supabase.from('equipment_items').update({ is_packed: newPacked }).eq('id', item.id);
+    // Update session date
+    const todayStr = new Date().toISOString().split('T')[0];
+    await supabase.from('equipment_sessions').upsert({ list_type: item.list_type, last_pack_date: todayStr, household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72' }, { onConflict: 'list_type,household_id' });
+  };
+
+  const handleEquipmentUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim()) return;
+    showStatus('מעבד...', false);
+    try {
+      const equipCats = Array.from(new Set([...EQUIP_CATEGORIES, ...equipmentItems.filter(i => i.list_type === equipListType).map(i => i.category)]));
+      const res = await fetch('/api/parse', { method: 'POST', body: JSON.stringify({ text: input, categories: equipCats, context: 'equipment' }) });
+      const data = await res.json();
+      if (data.items && data.items.length > 0) {
+        for (const item of data.items) {
+          const name = item.name || item.item_name || 'פריט';
+          const isRemoval = (item.quantity || 0) < 0 || item.removeAll;
+          if (isRemoval) {
+            const cleanName = name.replace(/^(את כל ה|כל ה|את ה|)/g, '').trim().toLowerCase();
+            const matches = equipmentItems.filter(i => i.list_type === equipListType && (i.item_name || '').toLowerCase().includes(cleanName));
+            for (const m of matches) {
+              setEquipmentItems(prev => prev.filter(i => i.id !== m.id));
+              await supabase.from('equipment_items').delete().eq('id', m.id);
+            }
+            if (matches.length === 0) showStatus(`לא מצאתי "${name}" ברשימה`, true);
+          } else {
+            const cat = item.category && equipCats.includes(item.category) ? item.category : 'ציוד נוסף';
+            if (data.new_categories) {
+              for (const nc of data.new_categories) {
+                if (!equipCats.includes(nc)) equipCats.push(nc);
+              }
+            }
+            const finalCat = item.category && [...equipCats, ...(data.new_categories || [])].includes(item.category) ? item.category : cat;
+            const { data: inserted } = await supabase.from('equipment_items').insert([{ item_name: name, category: finalCat, list_type: equipListType, is_packed: false, household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72' }]).select();
+            if (inserted) setEquipmentItems(prev => [...prev, ...inserted]);
+          }
+        }
+        showStatus('✅ עודכן!', true);
+      }
+      setInput('');
+    } catch { showStatus('❌ שגיאה בחיבור', true); }
+  };
+
+  const deleteEquipmentItem = async (item: EquipmentItem) => {
+    setEquipmentItems(prev => prev.filter(i => i.id !== item.id));
+    await supabase.from('equipment_items').delete().eq('id', item.id);
+  };
+
   const safeInventory = inventory || [];
   const safeShoppingList = shoppingList || [];
 
@@ -290,7 +372,12 @@ export default function HomePage() {
   const activeTasks = tasks.filter(t => t.status !== 'סיימתי');
   const completedTasks = tasks.filter(t => t.status === 'סיימתי');
 
-  const headerGradient = activeView === 'HOME' ? 'from-violet-600 via-fuchsia-600 to-orange-500' : activeView === 'INVENTORY' ? 'from-teal-600 to-emerald-500' : activeView === 'SHOPPING' ? 'from-rose-500 to-orange-500' : 'from-indigo-600 to-purple-700';
+  const headerGradient = activeView === 'HOME' ? 'from-violet-600 via-fuchsia-600 to-orange-500' : activeView === 'INVENTORY' ? 'from-teal-600 to-emerald-500' : activeView === 'SHOPPING' ? 'from-rose-500 to-orange-500' : activeView === 'EQUIPMENT' ? 'from-sky-600 to-cyan-500' : 'from-indigo-600 to-purple-700';
+
+  const currentEquipItems = equipmentItems.filter(i => i.list_type === equipListType);
+  const unpackedEquip = currentEquipItems.filter(i => !i.is_packed);
+  const packedEquip = currentEquipItems.filter(i => i.is_packed);
+  const equipCategories = Array.from(new Set([...EQUIP_CATEGORIES, ...currentEquipItems.map(i => i.category)])).filter(Boolean);
 
   return (
     <main className="min-h-screen bg-slate-50 font-sans pb-20 text-slate-900" dir="rtl">
@@ -386,6 +473,10 @@ export default function HomePage() {
             <button onClick={() => changeView('TASKS')} className="p-6 bg-white rounded-[2rem] shadow-lg border-b-8 border-indigo-500 text-2xl font-black flex justify-between items-center">
                <div className="text-right"><span className="block text-2xl font-black">📝 משימות</span><span className="text-slate-400 text-sm">{activeTasks.length} פתוחות</span></div>
                <span className="text-4xl">📌</span>
+            </button>
+            <button onClick={() => changeView('EQUIPMENT')} className="p-6 bg-white rounded-[2rem] shadow-lg border-b-8 border-sky-500 flex items-center justify-between active:scale-95 transition-all">
+               <div className="text-right"><span className="block text-2xl font-black">🧳 רשימת ציוד</span><span className="text-slate-400 text-sm">{equipmentItems.filter(i => !i.is_packed).length} לא נארזו</span></div>
+               <span className="text-4xl">🎒</span>
             </button>
           </div>
         )}
@@ -551,6 +642,93 @@ export default function HomePage() {
                 <h3 className="font-black text-slate-400 text-sm uppercase mb-6 pr-2">✅ משימות שהסתיימו:</h3>
                 <div className="space-y-4 opacity-70 hover:opacity-100 transition-opacity">
                   {completedTasks.map(task => <CompletedTaskCard key={task.id} task={task} onRestore={handleRestoreTask} onDelete={deleteTask} />)}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeView === 'EQUIPMENT' && (
+          <div className="space-y-6">
+            {/* Reset dialog */}
+            {showResetDialog && (
+              <div className="bg-sky-50 border-2 border-sky-200 p-6 rounded-[2rem] shadow-lg animate-bounce-short">
+                <p className="font-black text-lg text-sky-900 mb-4">התחלת אריזה חדשה?</p>
+                <p className="text-sm text-sky-700 mb-4">נראה שארזת לאחרונה. רוצה לאפס את הסימונים ולהתחיל מחדש?</p>
+                <div className="flex gap-2">
+                  <button onClick={() => resetPacking(showResetDialog)} className="flex-1 bg-sky-600 text-white px-4 py-3 rounded-xl font-black text-sm">כן, אריזה חדשה</button>
+                  <button onClick={() => dismissResetDialog(showResetDialog)} className="flex-1 bg-slate-200 text-slate-600 px-4 py-3 rounded-xl font-bold text-sm">לא, להמשיך מאיפה שהפסקתי</button>
+                </div>
+              </div>
+            )}
+
+            {/* List type tabs */}
+            <div className="flex gap-1 p-1 bg-white rounded-xl shadow-sm border border-slate-100">
+              {(['חו"ל', 'חד"כ', 'סופ"ש'] as const).map(lt => (
+                <button key={lt} onClick={() => { setEquipListType(lt); checkEquipmentSession(lt); }} className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all pointer-events-auto ${equipListType === lt ? 'bg-sky-500 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>{lt}</button>
+              ))}
+            </div>
+
+            {/* Free text input */}
+            <div className="bg-white p-5 rounded-[2rem] shadow-xl border border-slate-50 relative z-20">
+              <form onSubmit={handleEquipmentUpdate} className="space-y-3">
+                <textarea value={input} onChange={e => setInput(e.target.value)} placeholder="הוסף או הורד ציוד (למשל: מטען, אוזניות, תרופות שינה)" className="w-full p-4 bg-slate-50 rounded-2xl text-sm min-h-[70px] border-none focus:ring-2 focus:ring-sky-300 pointer-events-auto" />
+                <button type="submit" className="w-full p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto bg-sky-600 hover:bg-sky-700">
+                  עדכן רשימה 🧳
+                </button>
+              </form>
+              {status && (
+                <div className="mt-4 flex justify-center animate-in fade-in slide-in-from-bottom-2">
+                  <span className={`px-4 py-2 rounded-full text-xs font-bold shadow-sm ${status.includes('❌') ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-700'}`}>{status}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Unpacked items by category */}
+            {equipCategories.map(cat => {
+              const items = unpackedEquip.filter(i => i.category === cat);
+              if (items.length === 0) return null;
+              return (
+                <div key={`eqcat-${cat}`} className="space-y-2">
+                  <h3 className="font-black text-sky-700 text-xs uppercase pr-2 border-r-4 border-sky-400">{cat}</h3>
+                  <div className="grid gap-2">
+                    {items.map(item => (
+                      <div key={item.id} className="flex justify-between items-center bg-white p-4 rounded-[1.5rem] shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+                        <div className="flex items-center gap-3 flex-1">
+                          <button onClick={() => togglePacked(item)} className="w-7 h-7 rounded-lg border-2 border-sky-300 bg-white flex items-center justify-center hover:bg-sky-50 transition-colors pointer-events-auto" />
+                          <span className="font-bold text-slate-800">{item.item_name}</span>
+                        </div>
+                        <button onClick={() => deleteEquipmentItem(item)} className="text-slate-300 hover:text-red-500 text-sm font-bold pointer-events-auto transition-colors px-2">✕</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+
+            {unpackedEquip.length === 0 && !showResetDialog && (
+              <div className="text-center py-12 text-slate-400">
+                <span className="text-4xl block mb-3">🧳</span>
+                <span className="font-bold text-sm">הרשימה ריקה. הוסף ציוד בטקסט חופשי למעלה</span>
+              </div>
+            )}
+
+            {/* Packed items */}
+            {packedEquip.length > 0 && (
+              <div className="mt-8 pt-6 border-t-2 border-slate-200">
+                <h3 className="font-black text-emerald-600 text-sm mb-4 pr-2">✅ נארז ({packedEquip.length})</h3>
+                <div className="grid gap-2 opacity-70">
+                  {packedEquip.map(item => (
+                    <div key={item.id} className="flex justify-between items-center bg-emerald-50 p-3 rounded-xl border border-emerald-100">
+                      <div className="flex items-center gap-3 flex-1">
+                        <button onClick={() => togglePacked(item)} className="w-7 h-7 rounded-lg border-2 border-emerald-400 bg-emerald-500 flex items-center justify-center pointer-events-auto">
+                          <span className="text-white text-sm font-black">✓</span>
+                        </button>
+                        <span className="font-medium text-emerald-800 line-through text-sm">{item.item_name}</span>
+                      </div>
+                      <span className="text-[10px] text-emerald-500 font-bold">{item.category}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
