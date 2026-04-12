@@ -159,7 +159,7 @@ export default function HomePage() {
 
           // לוגיקת העברה בין קטגוריות (מלאי + קניות)
           if (item.moveToCategory) {
-            const cleanName = name.replace(/^(את כל ה|כל ה|את ה|)/g, '').trim().toLowerCase();
+            const cleanName = name.replace(/^(את כל ה|כל ה|את ה|ה)/g, '').trim().toLowerCase();
             const table = activeView === 'SHOPPING' ? 'shopping_list' : 'inventory_items';
             const sourceList = activeView === 'SHOPPING' ? shoppingList : inventory;
             const matches = sourceList.filter(i => (i.item_name || '').toLowerCase().includes(cleanName));
@@ -171,7 +171,7 @@ export default function HomePage() {
           }
           // לוגיקת המחיקה: חיפוש עם ניקוי תחיליות עבריות וסיווג כפילויות
           else if (activeView === 'INVENTORY' && isRemoval) {
-            const cleanName = name.replace(/^(את כל ה|כל ה|את ה|)/g, '').trim().toLowerCase();
+            const cleanName = name.replace(/^(את כל ה|כל ה|את ה|ה)/g, '').trim().toLowerCase();
             const matches = inventory.filter(i => (i.item_name || '').toLowerCase().includes(cleanName));
             // אם יש התאמה מדויקת אחת בלבד - בצע ישירות
             const exactMatch = matches.find(i => (i.item_name || '').toLowerCase() === cleanName);
@@ -346,7 +346,7 @@ export default function HomePage() {
           const name = item.name || item.item_name || 'פריט';
           const isRemoval = (item.quantity || 0) < 0 || item.removeAll;
           if (isRemoval) {
-            const cleanName = name.replace(/^(את כל ה|כל ה|את ה|)/g, '').trim().toLowerCase();
+            const cleanName = name.replace(/^(את כל ה|כל ה|את ה|ה)/g, '').trim().toLowerCase();
             const matches = equipmentItems.filter(i => i.list_type === equipListType && (i.item_name || '').toLowerCase().includes(cleanName));
             for (const m of matches) {
               setEquipmentItems(prev => prev.filter(i => i.id !== m.id));
@@ -381,7 +381,12 @@ export default function HomePage() {
 
   const filteredInventory = safeInventory
     .filter(i => (i.item_name || '').includes(searchTerm) && (invFilter === 'הכל' || i.location === invFilter))
-    .sort((a, b) => (a.item_name || '').localeCompare(b.item_name || '', 'he'));
+    .sort((a, b) => {
+      const aLow = (a.quantity || 0) <= 2 ? 0 : 1;
+      const bLow = (b.quantity || 0) <= 2 ? 0 : 1;
+      if (aLow !== bLow) return aLow - bLow;
+      return (a.item_name || '').localeCompare(b.item_name || '', 'he');
+    });
 
   const filteredShoppingList = safeShoppingList
     .filter(s => (s.item_name || '').includes(searchTerm))
@@ -559,7 +564,7 @@ export default function HomePage() {
                     <div key={`cat-${cat}`} className="space-y-3">
                       <h3 className="font-black text-teal-700 text-xs uppercase pr-2 border-r-4 border-teal-400">{cat}</h3>
                       <div className="grid gap-3">
-                        {itemsInCat.map(item => <InventoryCard key={item.id} item={item} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} updateExactQuantity={updateExactQuantity} onPlus={() => handlePlus(item)} onMinus={() => handleMinus(item)} />)}
+                        {itemsInCat.map(item => <InventoryCard key={item.id} item={item} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} updateExactQuantity={updateExactQuantity} onPlus={() => handlePlus(item)} onMinus={() => handleMinus(item)} onAddToShopping={addToShopping} shoppingList={shoppingList} />)}
                       </div>
                     </div>
                   );
@@ -567,7 +572,7 @@ export default function HomePage() {
               </div>
             ) : (
               <div className="grid gap-3">
-                {filteredInventory.map(item => <InventoryCard key={item.id} item={item} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} updateExactQuantity={updateExactQuantity} onPlus={() => handlePlus(item)} onMinus={() => handleMinus(item)} />)}
+                {filteredInventory.map(item => <InventoryCard key={item.id} item={item} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} updateExactQuantity={updateExactQuantity} onPlus={() => handlePlus(item)} onMinus={() => handleMinus(item)} onAddToShopping={addToShopping} shoppingList={shoppingList} />)}
               </div>
             )}
           </section>
@@ -820,9 +825,11 @@ function CompletedTaskCard({ task, onRestore, onDelete }: any) {
   );
 }
 
-function InventoryCard({ item, editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName, updateExactQuantity, onPlus, onMinus }: any) {
+function InventoryCard({ item, editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName, updateExactQuantity, onPlus, onMinus, onAddToShopping, shoppingList }: any) {
+  const isLow = (item.quantity || 0) <= 2;
+  const alreadyInShopping = shoppingList?.some((s: any) => (s.item_name || '').includes(item.item_name));
   return (
-    <div className="flex justify-between items-center bg-white p-4 rounded-[1.5rem] shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+    <div className={`flex justify-between items-center bg-white p-4 rounded-[1.5rem] shadow-sm border ${isLow ? 'border-rose-200 bg-rose-50/30' : 'border-slate-100'} hover:shadow-md transition-shadow`}>
       <div className="text-right flex-1">
         {editingId === item.id ? (
           <div className="flex items-center gap-2 mb-1">
@@ -833,6 +840,9 @@ function InventoryCard({ item, editingId, editNameValue, setEditingId, setEditNa
           <span onClick={() => {setEditingId(item.id); setEditNameValue(item.item_name || 'פריט לא ידוע');}} className="block font-bold text-lg text-slate-800 cursor-pointer hover:text-teal-600 hover:underline decoration-dashed decoration-slate-300 pointer-events-auto transition-colors">{item.item_name || 'פריט לא ידוע'}</span>
         )}
         <span className="text-[10px] uppercase font-bold text-slate-400">{item.category || 'כללי'} • {item.location || 'מזווה'}</span>
+        {isLow && !alreadyInShopping && (
+          <button onClick={() => onAddToShopping(item)} className="block mt-1 text-[10px] font-black text-rose-600 bg-rose-100 px-3 py-1 rounded-lg hover:bg-rose-200 pointer-events-auto transition-colors">+ הוסף לקניות</button>
+        )}
       </div>
       <div className="flex items-center gap-2" dir="ltr">
         <button onClick={onMinus} className="w-9 h-9 rounded-full bg-rose-100 text-rose-600 font-black pointer-events-auto shadow-sm hover:bg-rose-200 transition-colors active:scale-90">-</button>
@@ -840,7 +850,7 @@ function InventoryCard({ item, editingId, editNameValue, setEditingId, setEditNa
           <select value={Math.floor(item.quantity || 0)} onChange={(e) => updateExactQuantity(item, Number(e.target.value))} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer pointer-events-auto">
             {[...Array(21).keys()].map(num => <option key={num} value={num}>{num}</option>)}
           </select>
-          <span className={`text-xl font-black pointer-events-none ${(item.quantity || 0) <= 2 ? 'text-rose-600' : 'text-slate-700'}`}>{item.quantity || 0}</span>
+          <span className={`text-xl font-black pointer-events-none ${isLow ? 'text-rose-600' : 'text-slate-700'}`}>{item.quantity || 0}</span>
         </div>
         <button onClick={onPlus} className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-600 font-black pointer-events-auto shadow-sm hover:bg-emerald-200 transition-colors active:scale-90">+</button>
       </div>
@@ -873,7 +883,7 @@ function ShoppingCard({ item, editingId, editNameValue, setEditingId, setEditNam
               <button onClick={() => setEditingCatItemId(null)} className="text-[10px] font-black text-slate-400 pointer-events-auto">✕</button>
             </div>
           ) : (
-            <span onClick={() => { setEditingCatItemId(item.id); setEditCatValue(item.category || 'כללי'); }} className="text-[10px] uppercase font-bold text-slate-400 cursor-pointer hover:text-rose-500 pointer-events-auto transition-colors">{item.category || 'כללי'}</span>
+            <button type="button" onClick={() => { setEditingCatItemId(item.id); setEditCatValue(item.category || 'כללי'); }} className="text-[11px] font-bold text-slate-400 cursor-pointer hover:text-rose-500 pointer-events-auto transition-colors text-right bg-transparent border-none p-0 underline decoration-dashed decoration-slate-300">{item.category || 'כללי'}</button>
           )}
         </div>
       </div>
