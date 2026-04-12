@@ -37,6 +37,8 @@ export default function HomePage() {
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState('');
+  const [editingCatItemId, setEditingCatItemId] = useState<string | null>(null);
+  const [editCatValue, setEditCatValue] = useState('');
   const statusTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const showStatus = (msg: string, autoClear: boolean = false) => {
@@ -148,14 +150,25 @@ export default function HomePage() {
         const certainItems = [];
         const uncertainItems = [];
         const ambiguousRemovals: DisambiguationTask[] = [];
+        let movedCount = 0;
 
         for (const item of data.items) {
           const name = item.name || item.item_name || 'פריט';
           const isRemoval = (item.quantity || 0) < 0 || item.removeAll;
           const cat = (item.category || '').toLowerCase();
 
+          // לוגיקת העברה בין קטגוריות
+          if (activeView === 'INVENTORY' && item.moveToCategory) {
+            const cleanName = name.replace(/^(את כל ה|כל ה|את ה|)/g, '').trim().toLowerCase();
+            const matches = inventory.filter(i => (i.item_name || '').toLowerCase().includes(cleanName));
+            for (const match of matches) {
+              await supabase.from('inventory_items').update({ category: item.moveToCategory }).eq('id', match.id);
+            }
+            if (matches.length === 0) showStatus(`לא מצאתי "${name}" במלאי`, true);
+            else movedCount += matches.length;
+          }
           // לוגיקת המחיקה: חיפוש עם ניקוי תחיליות עבריות וסיווג כפילויות
-          if (activeView === 'INVENTORY' && isRemoval) {
+          else if (activeView === 'INVENTORY' && isRemoval) {
             const cleanName = name.replace(/^(את כל ה|כל ה|את ה|)/g, '').trim().toLowerCase();
             const matches = inventory.filter(i => (i.item_name || '').toLowerCase().includes(cleanName));
             // אם יש התאמה מדויקת אחת בלבד - בצע ישירות
@@ -191,6 +204,9 @@ export default function HomePage() {
         } else if (uncertainItems.length > 0) {
           setPendingItems(uncertainItems.map((i: any) => ({ ...i, item_name: i.name || i.item_name || 'פריט' })));
           showStatus(`🤔 נדרש סיווג`, false); 
+        } else if (movedCount > 0) {
+          fetchData();
+          showStatus(`✅ ${movedCount} פריטים הועברו!`, true);
         } else {
           showStatus('✅ עודכן!', true);
         }
@@ -239,6 +255,12 @@ export default function HomePage() {
   const saveEditedName = async (id: string, table: any) => {
     if (editNameValue.trim()) await supabase.from(table).update({ item_name: editNameValue.trim() }).eq('id', id);
     setEditingId(null); fetchData();
+  };
+
+  const saveEditedCategory = async (id: string, table: string, directValue?: string) => {
+    const val = (directValue || editCatValue).trim();
+    if (val) await supabase.from(table).update({ category: val }).eq('id', id);
+    setEditingCatItemId(null); fetchData();
   };
 
   const handleAddTask = async (e: React.FormEvent) => {
@@ -560,7 +582,7 @@ export default function HomePage() {
                     <div key={`shop-cat-${cat}`} className="space-y-3">
                       <h3 className="font-black text-rose-700 text-sm uppercase pr-2 border-r-4 border-rose-400">{cat}</h3>
                       <div className="grid gap-3">
-                        {list.map(s => <ShoppingCard key={s.id} item={s} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} onRemove={handleRemoveFromShopping} />)}
+                        {list.map(s => <ShoppingCard key={s.id} item={s} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} onRemove={handleRemoveFromShopping} editingCatItemId={editingCatItemId} editCatValue={editCatValue} setEditingCatItemId={setEditingCatItemId} setEditCatValue={setEditCatValue} saveEditedCategory={saveEditedCategory} categories={displayCategories} />)}
                       </div>
                     </div>
                   );
@@ -568,7 +590,7 @@ export default function HomePage() {
               </div>
             ) : (
               <div className="grid gap-3">
-                {filteredShoppingList.map(s => <ShoppingCard key={s.id} item={s} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} onRemove={handleRemoveFromShopping} />)}
+                {filteredShoppingList.map(s => <ShoppingCard key={s.id} item={s} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} onRemove={handleRemoveFromShopping} editingCatItemId={editingCatItemId} editCatValue={editCatValue} setEditingCatItemId={setEditingCatItemId} setEditCatValue={setEditCatValue} saveEditedCategory={saveEditedCategory} categories={displayCategories} />)}
               </div>
             )}
             
@@ -824,19 +846,34 @@ function InventoryCard({ item, editingId, editNameValue, setEditingId, setEditNa
   );
 }
 
-function ShoppingCard({ item, editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName, onRemove }: any) {
+function ShoppingCard({ item, editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName, onRemove, editingCatItemId, editCatValue, setEditingCatItemId, setEditCatValue, saveEditedCategory, categories }: any) {
   return (
     <div className="flex justify-between items-center gap-4 bg-white p-4 rounded-[1.5rem] shadow-sm border border-rose-50 hover:border-rose-100 transition-colors">
       <div className="flex items-center gap-4 flex-1">
         <button onClick={() => onRemove(item)} className="bg-rose-100 text-rose-600 hover:bg-rose-200 px-4 py-2 rounded-2xl text-xs font-black shadow-sm pointer-events-auto transition-colors">הסר</button>
-        {editingId === item.id ? (
-          <div className="flex items-center gap-2">
-            <input autoFocus value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedName(item.id, 'shopping_list')} className="border-b-2 border-rose-500 bg-rose-50 px-2 py-1 outline-none font-bold text-lg w-[140px] pointer-events-auto" />
-            <button onClick={() => saveEditedName(item.id, 'shopping_list')} className="bg-green-100 text-green-700 p-2 rounded-lg pointer-events-auto shadow-sm">✅</button>
-          </div>
-        ) : (
-          <span onClick={() => {setEditingId(item.id); setEditNameValue(item.item_name || 'פריט לא ידוע');}} className="font-bold text-slate-800 text-lg cursor-pointer hover:text-rose-600 hover:underline decoration-dashed decoration-slate-300 pointer-events-auto transition-colors">{item.item_name || 'פריט לא ידוע'}</span>
-        )}
+        <div className="flex flex-col gap-0.5">
+          {editingId === item.id ? (
+            <div className="flex items-center gap-2">
+              <input autoFocus value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedName(item.id, 'shopping_list')} className="border-b-2 border-rose-500 bg-rose-50 px-2 py-1 outline-none font-bold text-lg w-[140px] pointer-events-auto" />
+              <button onClick={() => saveEditedName(item.id, 'shopping_list')} className="bg-green-100 text-green-700 p-2 rounded-lg pointer-events-auto shadow-sm">✅</button>
+            </div>
+          ) : (
+            <span onClick={() => {setEditingId(item.id); setEditNameValue(item.item_name || 'פריט לא ידוע');}} className="font-bold text-slate-800 text-lg cursor-pointer hover:text-rose-600 hover:underline decoration-dashed decoration-slate-300 pointer-events-auto transition-colors">{item.item_name || 'פריט לא ידוע'}</span>
+          )}
+          {editingCatItemId === item.id ? (
+            <div className="flex items-center gap-1 flex-wrap">
+              {categories?.filter((c: string) => c !== 'uncertain' && c !== 'null').map((cat: string) => (
+                <button key={cat} onClick={async () => { await saveEditedCategory(item.id, 'shopping_list', cat); }}
+                  className="bg-rose-50 text-rose-600 px-2 py-0.5 rounded-lg text-[10px] font-bold hover:bg-rose-500 hover:text-white transition-all pointer-events-auto">{cat}</button>
+              ))}
+              <input value={editCatValue} onChange={(e) => setEditCatValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedCategory(item.id, 'shopping_list')} placeholder="קטגוריה..." className="border-b border-rose-300 bg-transparent px-1 outline-none text-[10px] font-bold w-[80px] pointer-events-auto" autoFocus />
+              <button onClick={() => saveEditedCategory(item.id, 'shopping_list')} className="text-[10px] font-black text-green-600 pointer-events-auto">✅</button>
+              <button onClick={() => setEditingCatItemId(null)} className="text-[10px] font-black text-slate-400 pointer-events-auto">✕</button>
+            </div>
+          ) : (
+            <span onClick={() => { setEditingCatItemId(item.id); setEditCatValue(item.category || 'כללי'); }} className="text-[10px] uppercase font-bold text-slate-400 cursor-pointer hover:text-rose-500 pointer-events-auto transition-colors">{item.category || 'כללי'}</span>
+          )}
+        </div>
       </div>
     </div>
   );
