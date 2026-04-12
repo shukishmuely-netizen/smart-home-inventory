@@ -42,8 +42,8 @@ export async function POST(request: NextRequest) {
        - IF THE USER SAYS TO REMOVE "ALL" ("את כל ה", "נגמר", "לרוקן", "לאפס"), set "removeAll": true AND "quantity": 0. Otherwise "removeAll": false.
     5. ITEM NAME MUST BE CLEAN: Return ONLY the product name itself. Strip prefixes like "את כל ה", "את ה", "כל ה", "הרבה", etc.
        For example: "תוריד את כל המיונז" → name: "מיונז", removeAll: true. "נגמר לי הקפה" → name: "קפה", removeAll: true.
-    6. MOVE OPERATIONS: If the user says to move items ("תזיז", "תעביר", "העבר") from one category to another, output each item with "moveToCategory" set to the TARGET category name. Match the target to EXISTING CATEGORIES using fuzzy/partial matching (e.g., "ירקות" matches "פירות וירקות"). Set quantity to 0 for moves.
-       For example: "תזיז מלפפון ונענע מטרי לירקות" → two items, each with moveToCategory matching the closest existing category containing "ירקות".
+    6. MOVE OPERATIONS: If the user says to move items ("תזיז", "תעביר", "העבר", "תעביר מ... ל...") from one category to another, set "moveToCategory" to the EXACT name of the best-matching EXISTING CATEGORY. Use fuzzy matching: "ירקות" → "פירות וירקות", "חלב" → "חלבי". Set quantity: 0, needs_classification: false, removeAll: false for moves. CRITICAL: moveToCategory must be one of the EXISTING CATEGORIES, never null for move operations.
+       For example: "תעביר את המלפפון והנענע מהטרי לפירות וירקות" → two items with moveToCategory: "פירות וירקות".
     7. SMART CATEGORIZATION: Fresh produce (fruits, vegetables, herbs like מלפפון, עגבניה, נענע, בצל, תפוח, בננה, לימון etc.) should go to "פירות וירקות" if that category exists, NOT to "טרי". "טרי" is for dairy/deli items.
 
     Output JSON ONLY:

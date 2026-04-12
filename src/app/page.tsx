@@ -157,14 +157,16 @@ export default function HomePage() {
           const isRemoval = (item.quantity || 0) < 0 || item.removeAll;
           const cat = (item.category || '').toLowerCase();
 
-          // לוגיקת העברה בין קטגוריות
-          if (activeView === 'INVENTORY' && item.moveToCategory) {
+          // לוגיקת העברה בין קטגוריות (מלאי + קניות)
+          if (item.moveToCategory) {
             const cleanName = name.replace(/^(את כל ה|כל ה|את ה|)/g, '').trim().toLowerCase();
-            const matches = inventory.filter(i => (i.item_name || '').toLowerCase().includes(cleanName));
+            const table = activeView === 'SHOPPING' ? 'shopping_list' : 'inventory_items';
+            const sourceList = activeView === 'SHOPPING' ? shoppingList : inventory;
+            const matches = sourceList.filter(i => (i.item_name || '').toLowerCase().includes(cleanName));
             for (const match of matches) {
-              await supabase.from('inventory_items').update({ category: item.moveToCategory }).eq('id', match.id);
+              await supabase.from(table).update({ category: item.moveToCategory }).eq('id', match.id);
             }
-            if (matches.length === 0) showStatus(`לא מצאתי "${name}" במלאי`, true);
+            if (matches.length === 0) showStatus(`לא מצאתי "${name}" ברשימה`, true);
             else movedCount += matches.length;
           }
           // לוגיקת המחיקה: חיפוש עם ניקוי תחיליות עבריות וסיווג כפילויות
