@@ -25,7 +25,6 @@ export default function HomePage() {
   const [pendingItems, setPendingItems] = useState<Item[]>([]);
   const [disambiguationItems, setDisambiguationItems] = useState<DisambiguationTask[]>([]);
   const [lowStockAlerts, setLowStockAlerts] = useState<Item[]>([]);
-  const [removedItems, setRemovedItems] = useState<any[]>([]);
   const [equipmentItems, setEquipmentItems] = useState<EquipmentItem[]>([]);
   const [equipListType, setEquipListType] = useState<'חו"ל' | 'חד"כ' | 'סופ"ש'>('חו"ל');
   const [showResetDialog, setShowResetDialog] = useState<string | null>(null);
@@ -95,6 +94,34 @@ export default function HomePage() {
 
   const handlePlus = (item: Item) => updateExactQuantity(item, item.quantity + 1);
   const handleMinus = (item: Item) => updateExactQuantity(item, item.quantity - 1);
+
+  const deleteInventoryItem = async (item: Item) => {
+    if (!confirm(`למחוק לצמיתות את "${item.item_name}"?`)) return;
+    setInventory(prev => prev.filter(i => i.id !== item.id));
+    await supabase.from('inventory_items').delete().eq('id', item.id);
+  };
+
+  const deleteShoppingItem = async (shopItem: any) => {
+    if (!confirm(`למחוק לצמיתות את "${shopItem.item_name}"?`)) return;
+    setShoppingList(prev => prev.filter(i => i.id !== shopItem.id));
+    await supabase.from('shopping_list').delete().eq('id', shopItem.id);
+  };
+
+  const moveShoppingToInventory = async (shopItem: any, qty: number) => {
+    const existing = inventory.find(i => i.item_name === shopItem.item_name);
+    if (existing) {
+      const newQty = (existing.quantity || 0) + qty;
+      await supabase.from('inventory_items').update({ quantity: newQty }).eq('id', existing.id);
+    } else {
+      await supabase.from('inventory_items').insert([{
+        item_name: shopItem.item_name, quantity: qty, category: shopItem.category || 'כללי',
+        location: 'מזווה', household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72'
+      }]);
+    }
+    await supabase.from('shopping_list').delete().eq('id', shopItem.id);
+    fetchData();
+    showStatus(`✅ ${shopItem.item_name} הועבר למלאי`, true);
+  };
 
   const executeRemoval = async (invItem: Item, qtyToSubtract: number, removeAll: boolean) => {
     const newQty = removeAll ? 0 : invItem.quantity + qtyToSubtract; // qtyToSubtract is negative
@@ -240,18 +267,6 @@ export default function HomePage() {
     await supabase.from('shopping_list').insert([{ item_name: item.item_name || 'פריט', category: item.category || 'כללי' }]);
     setLowStockAlerts(prev => prev.filter(i => i.item_name !== item.item_name));
     showStatus('✅ נוסף לקניות', true); fetchData();
-  };
-
-  const handleRemoveFromShopping = async (shopItem: any) => {
-    setRemovedItems(prev => [...prev, shopItem]);
-    setShoppingList(prev => prev.filter(i => i.id !== shopItem.id));
-    await supabase.from('shopping_list').delete().eq('id', shopItem.id);
-  };
-
-  const handleRestoreToShopping = async (shopItem: any) => {
-    setRemovedItems(prev => prev.filter(i => i.id !== shopItem.id));
-    setShoppingList(prev => [...prev, shopItem]);
-    await supabase.from('shopping_list').insert([{ item_name: shopItem.item_name || 'פריט', category: shopItem.category || 'כללי' }]);
   };
 
   const saveEditedName = async (id: string, table: any) => {
@@ -564,7 +579,7 @@ export default function HomePage() {
                     <div key={`cat-${cat}`} className="space-y-3">
                       <h3 className="font-black text-teal-700 text-xs uppercase pr-2 border-r-4 border-teal-400">{cat}</h3>
                       <div className="grid gap-3">
-                        {itemsInCat.map(item => <InventoryCard key={item.id} item={item} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} updateExactQuantity={updateExactQuantity} onPlus={() => handlePlus(item)} onMinus={() => handleMinus(item)} onAddToShopping={addToShopping} shoppingList={shoppingList} />)}
+                        {itemsInCat.map(item => <InventoryCard key={item.id} item={item} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} updateExactQuantity={updateExactQuantity} onPlus={() => handlePlus(item)} onMinus={() => handleMinus(item)} onAddToShopping={addToShopping} shoppingList={shoppingList} onDelete={deleteInventoryItem} />)}
                       </div>
                     </div>
                   );
@@ -572,7 +587,7 @@ export default function HomePage() {
               </div>
             ) : (
               <div className="grid gap-3">
-                {filteredInventory.map(item => <InventoryCard key={item.id} item={item} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} updateExactQuantity={updateExactQuantity} onPlus={() => handlePlus(item)} onMinus={() => handleMinus(item)} onAddToShopping={addToShopping} shoppingList={shoppingList} />)}
+                {filteredInventory.map(item => <InventoryCard key={item.id} item={item} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} updateExactQuantity={updateExactQuantity} onPlus={() => handlePlus(item)} onMinus={() => handleMinus(item)} onAddToShopping={addToShopping} shoppingList={shoppingList} onDelete={deleteInventoryItem} />)}
               </div>
             )}
           </section>
@@ -589,7 +604,7 @@ export default function HomePage() {
                     <div key={`shop-cat-${cat}`} className="space-y-3">
                       <h3 className="font-black text-rose-700 text-sm uppercase pr-2 border-r-4 border-rose-400">{cat}</h3>
                       <div className="grid gap-3">
-                        {list.map(s => <ShoppingCard key={s.id} item={s} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} onRemove={handleRemoveFromShopping} editingCatItemId={editingCatItemId} editCatValue={editCatValue} setEditingCatItemId={setEditingCatItemId} setEditCatValue={setEditCatValue} saveEditedCategory={saveEditedCategory} categories={displayCategories} />)}
+                        {list.map(s => <ShoppingCard key={s.id} item={s} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} editingCatItemId={editingCatItemId} editCatValue={editCatValue} setEditingCatItemId={setEditingCatItemId} setEditCatValue={setEditCatValue} saveEditedCategory={saveEditedCategory} categories={displayCategories} onDelete={deleteShoppingItem} onMoveToInventory={moveShoppingToInventory} />)}
                       </div>
                     </div>
                   );
@@ -597,23 +612,10 @@ export default function HomePage() {
               </div>
             ) : (
               <div className="grid gap-3">
-                {filteredShoppingList.map(s => <ShoppingCard key={s.id} item={s} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} onRemove={handleRemoveFromShopping} editingCatItemId={editingCatItemId} editCatValue={editCatValue} setEditingCatItemId={setEditingCatItemId} setEditCatValue={setEditCatValue} saveEditedCategory={saveEditedCategory} categories={displayCategories} />)}
+                {filteredShoppingList.map(s => <ShoppingCard key={s.id} item={s} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} editingCatItemId={editingCatItemId} editCatValue={editCatValue} setEditingCatItemId={setEditingCatItemId} setEditCatValue={setEditCatValue} saveEditedCategory={saveEditedCategory} categories={displayCategories} onDelete={deleteShoppingItem} onMoveToInventory={moveShoppingToInventory} />)}
               </div>
             )}
             
-            {removedItems.length > 0 && (
-               <div className="mt-12 pt-8 border-t-2 border-slate-200">
-                 <h3 className="font-black text-slate-400 text-[10px] uppercase mb-4 pr-2 tracking-widest">🗑️ הוסרו לאחרונה:</h3>
-                 <div className="grid gap-2 opacity-60">
-                   {removedItems.map((item, idx) => (
-                     <div key={`removed-${idx}`} className="flex justify-between items-center bg-slate-100 p-3 rounded-xl border border-dashed border-slate-300">
-                       <span className="text-xs line-through text-slate-500 font-medium">{item.item_name}</span>
-                       <button onClick={() => handleRestoreToShopping(item)} className="text-[10px] font-black bg-white text-slate-700 px-3 py-1.5 rounded-lg border shadow-sm hover:bg-slate-50 transition-colors pointer-events-auto">החזר חזרה +</button>
-                     </div>
-                   ))}
-                 </div>
-               </div>
-            )}
           </section>
         )}
 
@@ -724,10 +726,17 @@ export default function HomePage() {
                     {items.map(item => (
                       <div key={item.id} className="flex justify-between items-center bg-white p-4 rounded-[1.5rem] shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
                         <div className="flex items-center gap-3 flex-1">
-                          <button onClick={() => togglePacked(item)} className="w-7 h-7 rounded-lg border-2 border-sky-300 bg-white flex items-center justify-center hover:bg-sky-50 transition-colors pointer-events-auto" />
-                          <span className="font-bold text-slate-800">{item.item_name}</span>
+                          <button onClick={() => togglePacked(item)} className="w-7 h-7 rounded-lg border-2 border-sky-300 bg-white flex items-center justify-center hover:bg-sky-50 transition-colors pointer-events-auto flex-shrink-0" />
+                          {editingId === item.id ? (
+                            <div className="flex items-center gap-2 flex-1">
+                              <input autoFocus value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedName(item.id!, 'equipment_items')} className="border-b-2 border-sky-500 bg-sky-50 px-2 py-1 outline-none font-bold text-sm flex-1 pointer-events-auto" />
+                              <button onClick={() => saveEditedName(item.id!, 'equipment_items')} className="bg-green-100 text-green-700 p-2 rounded-lg pointer-events-auto shadow-sm">✅</button>
+                            </div>
+                          ) : (
+                            <span onClick={() => { setEditingId(item.id!); setEditNameValue(item.item_name); }} className="font-bold text-slate-800 cursor-pointer hover:text-sky-600 pointer-events-auto flex-1">{item.item_name}</span>
+                          )}
                         </div>
-                        <button onClick={() => deleteEquipmentItem(item)} className="text-slate-300 hover:text-red-500 text-sm font-bold pointer-events-auto transition-colors px-2">✕</button>
+                        <button onClick={() => { if (confirm(`למחוק לצמיתות את "${item.item_name}"?`)) deleteEquipmentItem(item); }} className="text-slate-300 hover:text-red-500 text-sm font-bold pointer-events-auto transition-colors px-2">🗑️</button>
                       </div>
                     ))}
                   </div>
@@ -825,7 +834,7 @@ function CompletedTaskCard({ task, onRestore, onDelete }: any) {
   );
 }
 
-function InventoryCard({ item, editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName, updateExactQuantity, onPlus, onMinus, onAddToShopping, shoppingList }: any) {
+function InventoryCard({ item, editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName, updateExactQuantity, onPlus, onMinus, onAddToShopping, shoppingList, onDelete }: any) {
   const isLow = (item.quantity || 0) <= 2;
   const alreadyInShopping = shoppingList?.some((s: any) => (s.item_name || '').includes(item.item_name));
   return (
@@ -853,17 +862,21 @@ function InventoryCard({ item, editingId, editNameValue, setEditingId, setEditNa
           <span className={`text-xl font-black pointer-events-none ${isLow ? 'text-rose-600' : 'text-slate-700'}`}>{item.quantity || 0}</span>
         </div>
         <button onClick={onPlus} className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-600 font-black pointer-events-auto shadow-sm hover:bg-emerald-200 transition-colors active:scale-90">+</button>
+        <button onClick={() => onDelete(item)} className="w-9 h-9 rounded-full bg-slate-100 text-slate-400 hover:bg-red-100 hover:text-red-600 font-black text-xs pointer-events-auto shadow-sm transition-colors active:scale-90" title="מחק לצמיתות">🗑️</button>
       </div>
     </div>
   );
 }
 
-function ShoppingCard({ item, editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName, onRemove, editingCatItemId, editCatValue, setEditingCatItemId, setEditCatValue, saveEditedCategory, categories }: any) {
+function ShoppingCard({ item, editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName, editingCatItemId, editCatValue, setEditingCatItemId, setEditCatValue, saveEditedCategory, categories, onDelete, onMoveToInventory }: any) {
+  const [showQtyDialog, setShowQtyDialog] = useState(false);
+  const [qty, setQty] = useState(1);
   return (
-    <div className="flex justify-between items-center gap-4 bg-white p-4 rounded-[1.5rem] shadow-sm border border-rose-50 hover:border-rose-100 transition-colors">
-      <div className="flex items-center gap-4 flex-1">
-        <button onClick={() => onRemove(item)} className="bg-rose-100 text-rose-600 hover:bg-rose-200 px-4 py-2 rounded-2xl text-xs font-black shadow-sm pointer-events-auto transition-colors">הסר</button>
-        <div className="flex flex-col gap-0.5">
+    <div className="flex flex-col gap-3 bg-white p-4 rounded-[1.5rem] shadow-sm border border-rose-50 hover:border-rose-100 transition-colors">
+      <div className="flex items-center gap-2 flex-wrap">
+        <button onClick={() => onDelete(item)} className="bg-slate-100 text-slate-500 hover:bg-red-100 hover:text-red-600 px-3 py-1.5 rounded-xl text-xs font-black shadow-sm pointer-events-auto transition-colors">🗑️ מחק</button>
+        <button onClick={() => setShowQtyDialog(!showQtyDialog)} className="bg-teal-100 text-teal-700 hover:bg-teal-200 px-3 py-1.5 rounded-xl text-xs font-black shadow-sm pointer-events-auto transition-colors">📦 הוסף למלאי</button>
+        <div className="flex flex-col gap-0.5 flex-1 text-right">
           {editingId === item.id ? (
             <div className="flex items-center gap-2">
               <input autoFocus value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedName(item.id, 'shopping_list')} className="border-b-2 border-rose-500 bg-rose-50 px-2 py-1 outline-none font-bold text-lg w-[140px] pointer-events-auto" />
@@ -887,6 +900,15 @@ function ShoppingCard({ item, editingId, editNameValue, setEditingId, setEditNam
           )}
         </div>
       </div>
+      {showQtyDialog && (
+        <div className="flex items-center gap-2 bg-teal-50 p-3 rounded-xl border border-teal-200">
+          <span className="text-xs font-bold text-teal-900 flex-1">כמות להוספה למלאי:</span>
+          <button onClick={() => setQty(Math.max(1, qty - 1))} className="w-8 h-8 rounded-full bg-white text-teal-600 font-black pointer-events-auto shadow-sm">-</button>
+          <span className="text-lg font-black text-teal-800 min-w-[28px] text-center">{qty}</span>
+          <button onClick={() => setQty(qty + 1)} className="w-8 h-8 rounded-full bg-white text-teal-600 font-black pointer-events-auto shadow-sm">+</button>
+          <button onClick={() => { onMoveToInventory(item, qty); setShowQtyDialog(false); setQty(1); }} className="bg-teal-600 text-white px-3 py-1.5 rounded-xl text-xs font-black pointer-events-auto">אישור ✓</button>
+        </div>
+      )}
     </div>
   );
 }
