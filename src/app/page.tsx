@@ -26,7 +26,7 @@ export default function HomePage() {
   const [disambiguationItems, setDisambiguationItems] = useState<DisambiguationTask[]>([]);
   const [lowStockAlerts, setLowStockAlerts] = useState<Item[]>([]);
   const [equipmentItems, setEquipmentItems] = useState<EquipmentItem[]>([]);
-  const [equipListType, setEquipListType] = useState<'חו"ל' | 'חד"כ' | 'סופ"ש'>('חו"ל');
+  const [equipListType, setEquipListType] = useState<'חו"ל' | 'חד"כ' | 'סופ"ש'>('חד"כ');
   const [showResetDialog, setShowResetDialog] = useState<string | null>(null);
   const EQUIP_CATEGORIES = ['ניאו', 'חשמל', 'בגדים', 'תרופות', 'נעליים', 'ציוד נוסף'];
 
