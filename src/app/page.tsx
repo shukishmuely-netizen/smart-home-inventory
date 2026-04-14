@@ -81,8 +81,10 @@ export default function HomePage() {
 
   const updateExactQuantity = async (item: Item, newQty: number) => {
     const finalQty = Math.max(0, newQty);
-    setInventory(prev => prev.map(i => i.id === item.id ? { ...i, quantity: finalQty } : i));
-    await supabase.from('inventory_items').update({ quantity: finalQty }).eq('id', item.id);
+    if (finalQty === item.quantity) return;
+    const now = new Date().toISOString();
+    setInventory(prev => prev.map(i => i.id === item.id ? { ...i, quantity: finalQty, updated_at: now } : i));
+    await supabase.from('inventory_items').update({ quantity: finalQty, updated_at: now }).eq('id', item.id);
     
     if (finalQty <= 2 && finalQty < item.quantity) {
       const alreadyInShopping = shoppingList.some(s => s.item_name === item.item_name);
