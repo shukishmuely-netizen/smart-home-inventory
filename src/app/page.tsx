@@ -848,7 +848,7 @@ function InventoryCard({ item, editingId, editNameValue, setEditingId, setEditNa
         ) : (
           <span onClick={() => {setEditingId(item.id); setEditNameValue(item.item_name || 'פריט לא ידוע');}} className="block font-bold text-lg text-slate-800 cursor-pointer hover:text-teal-600 hover:underline decoration-dashed decoration-slate-300 pointer-events-auto transition-colors">{item.item_name || 'פריט לא ידוע'}</span>
         )}
-        <span className="text-[10px] uppercase font-bold text-slate-400">{item.category || 'כללי'} • {item.location || 'מזווה'}</span>
+        <span className="text-[10px] uppercase font-bold text-slate-400">{item.category || 'כללי'} • {item.location || 'מזווה'}{item.updated_at ? ` • ${new Date(item.updated_at).toLocaleDateString('he-IL')}` : ''}</span>
         {isLow && !alreadyInShopping && (
           <button onClick={() => onAddToShopping(item)} className="block mt-1 text-[10px] font-black text-rose-600 bg-rose-100 px-3 py-1 rounded-lg hover:bg-rose-200 pointer-events-auto transition-colors">+ הוסף לקניות</button>
         )}
