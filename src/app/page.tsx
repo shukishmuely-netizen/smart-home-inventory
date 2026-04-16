@@ -25,6 +25,7 @@ export default function HomePage() {
   const [pendingItems, setPendingItems] = useState<Item[]>([]);
   const [disambiguationItems, setDisambiguationItems] = useState<DisambiguationTask[]>([]);
   const [lowStockAlerts, setLowStockAlerts] = useState<Item[]>([]);
+  const [duplicateShoppingAlerts, setDuplicateShoppingAlerts] = useState<string[]>([]);
   const [equipmentItems, setEquipmentItems] = useState<EquipmentItem[]>([]);
   const [equipListType, setEquipListType] = useState<'חו"ל' | 'חד"כ' | 'סופ"ש'>('חד"כ');
   const [showResetDialog, setShowResetDialog] = useState<string | null>(null);
@@ -176,10 +177,13 @@ export default function HomePage() {
       }
 
       if (data.items && data.items.length > 0) {
-        const certainItems = [];
-        const uncertainItems = [];
+        const certainItems: any[] = [];
+        const uncertainItems: any[] = [];
         const ambiguousRemovals: DisambiguationTask[] = [];
         let movedCount = 0;
+
+        const duplicateShoppingItems: string[] = [];
+        const normalizeShopName = (n: string) => (n || '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
 
         for (const item of data.items) {
           const name = item.name || item.item_name || 'פריט';
@@ -217,6 +221,17 @@ export default function HomePage() {
           } 
           // הוספת פריט (רגיל)
           else {
+            // בדיקת כפילות ברשימת קניות
+            if (activeView === 'SHOPPING') {
+              const baseName = normalizeShopName(name);
+              const existsInList = shoppingList.some(s => normalizeShopName(s.item_name || '') === baseName);
+              const alreadyQueued = certainItems.some(c => normalizeShopName(c.name || c.item_name || '') === baseName)
+                || uncertainItems.some(u => normalizeShopName(u.name || u.item_name || '') === baseName);
+              if (existsInList || alreadyQueued) {
+                duplicateShoppingItems.push(name);
+                continue;
+              }
+            }
             if (item.needs_classification || cat === 'uncertain' || cat === 'לא ידוע' || cat === 'null') {
               uncertainItems.push(item);
             } else {
@@ -229,15 +244,20 @@ export default function HomePage() {
         for (const item of certainItems) await saveItemWithCategory(item);
         
         // עדכון סטייטים לחלונות הקופצים
+        if (duplicateShoppingItems.length > 0) {
+          setDuplicateShoppingAlerts(prev => Array.from(new Set([...prev, ...duplicateShoppingItems])));
+        }
         if (ambiguousRemovals.length > 0) {
           setDisambiguationItems(prev => [...prev, ...ambiguousRemovals]);
           showStatus(`יש כמה אפשרויות`, false);
         } else if (uncertainItems.length > 0) {
           setPendingItems(uncertainItems.map((i: any) => ({ ...i, item_name: i.name || i.item_name || 'פריט' })));
-          showStatus(`🤔 נדרש סיווג`, false); 
+          showStatus(`🤔 נדרש סיווג`, false);
         } else if (movedCount > 0) {
           fetchData();
           showStatus(`✅ ${movedCount} פריטים הועברו!`, true);
+        } else if (duplicateShoppingItems.length > 0 && certainItems.length === 0) {
+          showStatus(`⚠️ כבר ברשימה`, false);
         } else {
           showStatus('✅ עודכן!', true);
         }
@@ -547,6 +567,22 @@ export default function HomePage() {
                 <span className={`px-4 py-2 rounded-full text-xs font-bold shadow-sm ${status.includes('❌') ? 'bg-red-100 text-red-600' : status.includes('🤔') || status.includes('כמה') ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700'}`}>{status}</span>
               </div>
             )}
+          </div>
+        )}
+
+        {duplicateShoppingAlerts.length > 0 && activeView === 'SHOPPING' && (
+          <div className="mb-6 space-y-3">
+            {duplicateShoppingAlerts.map(name => (
+              <div key={`dup-${name}`} className="bg-amber-50 border-2 border-amber-200 p-4 rounded-2xl flex justify-between items-center gap-3">
+                <span className="font-bold text-amber-900 text-sm">⚠️ &quot;{name}&quot; כבר ברשימה</span>
+                <button
+                  onClick={() => setDuplicateShoppingAlerts(prev => prev.filter(n => n !== name))}
+                  className="bg-amber-500 text-white px-4 py-1.5 rounded-xl font-black text-sm pointer-events-auto hover:bg-amber-600 transition-colors"
+                >
+                  הבנתי
+                </button>
+              </div>
+            ))}
           </div>
         )}
 
