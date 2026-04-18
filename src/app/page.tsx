@@ -742,9 +742,20 @@ export default function HomePage() {
             <div className="bg-white p-5 rounded-[2rem] shadow-xl border border-slate-50 relative z-20">
               <form onSubmit={handleEquipmentUpdate} className="space-y-3">
                 <textarea value={input} onChange={e => setInput(e.target.value)} placeholder="הוסף או הורד ציוד (למשל: מטען, אוזניות, תרופות שינה)" className="w-full p-4 bg-slate-50 rounded-2xl text-sm min-h-[70px] border-none focus:ring-2 focus:ring-sky-300 pointer-events-auto" />
-                <button type="submit" className="w-full p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto bg-sky-600 hover:bg-sky-700">
-                  עדכן רשימה 🧳
-                </button>
+                <div className="flex gap-2">
+                  <button type="submit" className="flex-1 p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto bg-sky-600 hover:bg-sky-700">
+                    עדכן רשימה 🧳
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowResetDialog(equipListType)}
+                    disabled={packedEquip.length === 0}
+                    className="p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto bg-amber-500 hover:bg-amber-600 disabled:bg-slate-300 disabled:cursor-not-allowed"
+                    title="אפס את כל הסימונים"
+                  >
+                    חדש ✨
+                  </button>
+                </div>
               </form>
               {status && (
                 <div className="mt-4 flex justify-center animate-in fade-in slide-in-from-bottom-2">
