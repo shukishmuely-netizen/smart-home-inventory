@@ -7,6 +7,7 @@ type Task = { id?: string; title: string; description?: string; urgency: string;
 type EquipmentItem = { id?: string; list_type: string; category: string; item_name: string; is_packed: boolean };
 
 type DisambiguationTask = { originalName: string; matches: Item[]; quantityToSubtract: number; removeAll: boolean; };
+type WordChoiceTask = { originalName: string; options: string[]; item: any };
 
 export default function HomePage() {
   const today = new Date().toISOString().split('T')[0];
@@ -26,6 +27,7 @@ export default function HomePage() {
   const [disambiguationItems, setDisambiguationItems] = useState<DisambiguationTask[]>([]);
   const [lowStockAlerts, setLowStockAlerts] = useState<Item[]>([]);
   const [duplicateShoppingAlerts, setDuplicateShoppingAlerts] = useState<string[]>([]);
+  const [wordChoiceTasks, setWordChoiceTasks] = useState<WordChoiceTask[]>([]);
   const [equipmentItems, setEquipmentItems] = useState<EquipmentItem[]>([]);
   const [equipListType, setEquipListType] = useState<'חו"ל' | 'חד"כ' | 'סופ"ש'>('חד"כ');
   const [showResetDialog, setShowResetDialog] = useState<string | null>(null);
@@ -183,7 +185,9 @@ export default function HomePage() {
         let movedCount = 0;
 
         const duplicateShoppingItems: string[] = [];
+        const wordChoiceTasksLocal: WordChoiceTask[] = [];
         const normalizeShopName = (n: string) => (n || '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
+        const stripPrefix = (w: string) => w.replace(/^(ה|ב|ל|מ|ש|ו|כ)/, '');
 
         for (const item of data.items) {
           const name = item.name || item.item_name || 'פריט';
@@ -231,6 +235,24 @@ export default function HomePage() {
                 duplicateShoppingItems.push(name);
                 continue;
               }
+              // בדיקת מילים-מוצרים-בפני-עצמן
+              const words = baseName.split(/\s+/).filter(w => w.length > 1);
+              if (words.length > 1) {
+                const knownNames = new Set<string>();
+                inventory.forEach(i => knownNames.add(normalizeShopName(i.item_name || '')));
+                shoppingList.forEach(s => knownNames.add(normalizeShopName(s.item_name || '')));
+                const matchingWords: string[] = [];
+                for (const w of words) {
+                  const candidates = [w, stripPrefix(w)].filter(c => c.length > 1);
+                  for (const c of candidates) {
+                    if (knownNames.has(c) && !matchingWords.includes(c)) matchingWords.push(c);
+                  }
+                }
+                if (matchingWords.length > 0) {
+                  wordChoiceTasksLocal.push({ originalName: name, options: matchingWords, item });
+                  continue;
+                }
+              }
             }
             if (item.needs_classification || cat === 'uncertain' || cat === 'לא ידוע' || cat === 'null') {
               uncertainItems.push(item);
@@ -247,9 +269,14 @@ export default function HomePage() {
         if (duplicateShoppingItems.length > 0) {
           setDuplicateShoppingAlerts(prev => Array.from(new Set([...prev, ...duplicateShoppingItems])));
         }
+        if (wordChoiceTasksLocal.length > 0) {
+          setWordChoiceTasks(prev => [...prev, ...wordChoiceTasksLocal]);
+        }
         if (ambiguousRemovals.length > 0) {
           setDisambiguationItems(prev => [...prev, ...ambiguousRemovals]);
           showStatus(`יש כמה אפשרויות`, false);
+        } else if (wordChoiceTasksLocal.length > 0 && certainItems.length === 0 && uncertainItems.length === 0) {
+          showStatus(`🤔 איזה מהמוצרים?`, false);
         } else if (uncertainItems.length > 0) {
           setPendingItems(uncertainItems.map((i: any) => ({ ...i, item_name: i.name || i.item_name || 'פריט' })));
           showStatus(`🤔 נדרש סיווג`, false);
@@ -283,6 +310,19 @@ export default function HomePage() {
     }
     setDisambiguationItems(prev => prev.filter(t => t !== task));
     if (disambiguationItems.length <= 1 && pendingItems.length === 0) showStatus('✅ המלאי עודכן!', true);
+  };
+
+  const handleResolveWordChoice = async (task: WordChoiceTask, chosen: string) => {
+    setWordChoiceTasks(prev => prev.filter(t => t !== task));
+    const baseName = (chosen || '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
+    const existsInList = shoppingList.some(s => (s.item_name || '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase() === baseName);
+    if (existsInList) {
+      setDuplicateShoppingAlerts(prev => Array.from(new Set([...prev, chosen])));
+      showStatus(`⚠️ כבר ברשימה`, false);
+      return;
+    }
+    await saveItemWithCategory({ ...task.item, name: chosen, item_name: chosen });
+    if (wordChoiceTasks.length <= 1) showStatus('✅ נוסף לקניות', true);
   };
 
   const addToShopping = async (item: Item) => {
@@ -567,6 +607,41 @@ export default function HomePage() {
                 <span className={`px-4 py-2 rounded-full text-xs font-bold shadow-sm ${status.includes('❌') ? 'bg-red-100 text-red-600' : status.includes('🤔') || status.includes('כמה') ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700'}`}>{status}</span>
               </div>
             )}
+          </div>
+        )}
+
+        {wordChoiceTasks.length > 0 && activeView === 'SHOPPING' && (
+          <div className="mb-8 space-y-4">
+            {wordChoiceTasks.map((task, idx) => (
+              <div key={`wc-${idx}`} className="bg-rose-50 p-6 rounded-[2rem] border-2 border-rose-200 shadow-lg">
+                <p className="font-black text-lg mb-4 text-rose-900">
+                  למה התכוונת? אחת מהמילים ב<span className="text-rose-600">&quot;{task.originalName}&quot;</span> היא מוצר בפני עצמו.
+                </p>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  <button
+                    onClick={() => handleResolveWordChoice(task, task.originalName)}
+                    className="bg-rose-600 text-white px-4 py-2 rounded-xl font-black text-sm shadow-sm hover:bg-rose-700 transition-all"
+                  >
+                    {task.originalName}
+                  </button>
+                  {task.options.map(opt => (
+                    <button
+                      key={opt}
+                      onClick={() => handleResolveWordChoice(task, opt)}
+                      className="bg-white px-4 py-2 rounded-xl font-bold text-sm shadow-sm border border-rose-100 hover:bg-rose-500 hover:text-white transition-all"
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => setWordChoiceTasks(prev => prev.filter(t => t !== task))}
+                  className="bg-slate-200 text-slate-500 px-4 py-2 rounded-xl font-bold text-sm shadow-sm hover:bg-slate-300 transition-all"
+                >
+                  ביטול
+                </button>
+              </div>
+            ))}
           </div>
         )}
 
