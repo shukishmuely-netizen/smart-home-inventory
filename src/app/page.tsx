@@ -3,7 +3,8 @@ import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 
 type Item = { id?: string; item_name: string; name?: string; quantity: number; category: string; location: string; needs_classification?: boolean; options?: string[]; removeAll?: boolean };
-type Task = { id?: string; title: string; description?: string; urgency: string; assignee: string; target_date: string; status: string };
+type Task = { id?: string; title: string; description?: string; urgency: string; assignee: string; target_date: string; status: string; depends_on_task_id?: string | null };
+type EditTaskFocus = 'title' | 'urgency' | 'date' | 'assignee' | 'depends' | 'all';
 type EquipmentItem = { id?: string; list_type: string; category: string; item_name: string; is_packed: boolean };
 
 type DisambiguationTask = { originalName: string; matches: Item[]; quantityToSubtract: number; removeAll: boolean; };
@@ -33,10 +34,13 @@ export default function HomePage() {
   const [showResetDialog, setShowResetDialog] = useState<string | null>(null);
   const EQUIP_CATEGORIES = ['ניאו', 'חשמל', 'בגדים', 'תרופות', 'נעליים', 'ציוד נוסף'];
 
-  const [newTask, setNewTask] = useState<Task>({ 
-    title: '', description: '', urgency: 'סטנדרטית', assignee: 'כולם', target_date: today, status: 'לא התחלתי' 
+  const [newTask, setNewTask] = useState<Task>({
+    title: '', description: '', urgency: 'סטנדרטית', assignee: 'כולם', target_date: today, status: 'לא התחלתי', depends_on_task_id: null
   });
   const [showTaskForm, setShowTaskForm] = useState(false);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editTaskDraft, setEditTaskDraft] = useState<Task | null>(null);
+  const [editTaskFocus, setEditTaskFocus] = useState<EditTaskFocus>('all');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState('');
   const [editingCatItemId, setEditingCatItemId] = useState<string | null>(null);
@@ -342,23 +346,86 @@ export default function HomePage() {
     setEditingCatItemId(null); fetchData();
   };
 
-  const handleAddTask = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const urgencyEmoji = (u: string): string => {
+    if (u === 'דחופה מאד') return '🚨';
+    if (u === 'גבוהה') return '🔥';
+    if (u === 'סטנדרטית') return '📋';
+    if (u === 'נמוכה') return '💤';
+    return '📋';
+  };
+
+  const buildWhatsAppLink = (t: Task) => {
+    const dateParts = t.target_date.split('-');
+    const formattedDate = `${dateParts[2]}/${dateParts[1]}/${dateParts[0]}`;
+    let text = `*משימה חדשה: ${t.title}*\n`;
+    if (t.description) text += `${t.description}\n`;
+    text += `\n*באחריות:* ${t.assignee}`;
+    text += `\n*תאריך יעד:* ${formattedDate}`;
+    text += `\n*דחיפות:* ${t.urgency}`;
+    return `https://wa.me/?text=${encodeURIComponent(text)}`;
+  };
+
+  const persistNewTask = async (sendToWhatsApp: boolean) => {
     if (!newTask.title) return;
     const { error } = await supabase.from('tasks').insert([newTask]);
-    if (!error) {
-      const dateParts = newTask.target_date.split('-');
-      const formattedDate = `${dateParts[2]}/${dateParts[1]}/${dateParts[0]}`;
-      let text = `*משימה חדשה: ${newTask.title}*\n`;
-      if (newTask.description) text += `${newTask.description}\n`;
-      text += `\n*באחריות:* ${newTask.assignee}`;
-      text += `\n*תאריך יעד:* ${formattedDate}`;
-      text += `\n*דחיפות:* ${newTask.urgency}`;
-      const waLink = `https://wa.me/?text=${encodeURIComponent(text)}`;
-      setNewTask({ title: '', description: '', urgency: 'סטנדרטית', assignee: 'כולם', target_date: today, status: 'לא התחלתי' });
-      setShowTaskForm(false); fetchData();
-      window.location.href = waLink;
+    if (error) return;
+    const taskCopy = { ...newTask };
+    setNewTask({ title: '', description: '', urgency: 'סטנדרטית', assignee: 'כולם', target_date: today, status: 'לא התחלתי', depends_on_task_id: null });
+    setShowTaskForm(false);
+    fetchData();
+    if (sendToWhatsApp) {
+      window.location.href = buildWhatsAppLink(taskCopy);
     }
+  };
+
+  const handleAddTask = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await persistNewTask(true);
+  };
+
+  const startEditTask = (task: Task, focus: EditTaskFocus = 'all') => {
+    if (editingTaskId === task.id) {
+      // toggle off if clicking the same area twice with no specific focus
+      if (focus === 'all') {
+        setEditingTaskId(null);
+        setEditTaskDraft(null);
+      } else {
+        setEditTaskFocus(focus);
+      }
+      return;
+    }
+    setEditingTaskId(task.id || null);
+    setEditTaskDraft({ ...task, depends_on_task_id: task.depends_on_task_id || null });
+    setEditTaskFocus(focus);
+  };
+
+  const cancelEditTask = () => {
+    setEditingTaskId(null);
+    setEditTaskDraft(null);
+    setEditTaskFocus('all');
+  };
+
+  const saveEditTask = async () => {
+    if (!editingTaskId || !editTaskDraft) return;
+    const updates: any = {
+      title: editTaskDraft.title,
+      description: editTaskDraft.description || '',
+      urgency: editTaskDraft.urgency,
+      assignee: editTaskDraft.assignee,
+      target_date: editTaskDraft.target_date,
+      depends_on_task_id: editTaskDraft.depends_on_task_id || null,
+    };
+    setTasks(prev => prev.map(t => t.id === editingTaskId ? { ...t, ...updates } : t));
+    await supabase.from('tasks').update(updates).eq('id', editingTaskId);
+    cancelEditTask();
+    fetchData();
+  };
+
+  const getBlockingTask = (task: Task): Task | null => {
+    if (!task.depends_on_task_id) return null;
+    const dep = tasks.find(t => t.id === task.depends_on_task_id);
+    if (!dep || dep.status === 'סיימתי') return null;
+    return dep;
   };
 
   const updateTaskStatus = async (id: string, newStatus: string) => {
@@ -751,30 +818,146 @@ export default function HomePage() {
                   </select>
                 </div>
                 <input type="date" className="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold" value={newTask.target_date} onChange={e => setNewTask({...newTask, target_date: e.target.value})} />
-                <button type="submit" className="w-full bg-emerald-500 text-white p-5 rounded-2xl font-black shadow-md">שמור ושלח לוואטסאפ 💬</button>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] font-black text-slate-500 pr-1">תלות במשימה (אופציונלי)</label>
+                  <select
+                    className="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold"
+                    value={newTask.depends_on_task_id || ''}
+                    onChange={e => setNewTask({...newTask, depends_on_task_id: e.target.value || null})}
+                  >
+                    <option value="">ללא תלות — אפשר להתחיל מיד</option>
+                    {tasks.filter(t => t.status !== 'סיימתי').map(t => (
+                      <option key={t.id} value={t.id}>{t.title}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => persistNewTask(false)} className="flex-1 bg-emerald-500 text-white p-5 rounded-2xl font-black shadow-md hover:bg-emerald-600 active:scale-95 transition-all">💾 שמור</button>
+                  <button type="button" onClick={() => persistNewTask(true)} className="flex-1 bg-emerald-600 text-white p-5 rounded-2xl font-black shadow-md hover:bg-emerald-700 active:scale-95 transition-all">💬 שמור + וואטסאפ</button>
+                </div>
               </form>
             )}
 
             <div className="space-y-4">
               {activeTasks.map(task => {
-                const urgencyColor = task.urgency === 'דחופה מאד' ? 'border-red-500 bg-red-50' : task.urgency === 'גבוהה' ? 'border-orange-400 bg-orange-50' : 'border-slate-200 bg-white';
+                const urgencyColor = task.urgency === 'דחופה מאד' ? 'border-red-500 bg-red-50' : task.urgency === 'גבוהה' ? 'border-orange-400 bg-orange-50' : task.urgency === 'נמוכה' ? 'border-emerald-300 bg-emerald-50/40' : 'border-slate-200 bg-white';
                 const isPlural = (task.assignee || '').includes('כולם');
+                const blockedBy = getBlockingTask(task);
+                const isEditing = editingTaskId === task.id;
+                const draft = isEditing ? editTaskDraft : null;
+                const stop = (e: React.MouseEvent) => e.stopPropagation();
+                const chipBase = "px-2 py-1 rounded-full pointer-events-auto transition-colors hover:bg-slate-200";
                 return (
-                  <div key={task.id} className={`bg-white p-6 rounded-[2rem] shadow-md border-r-8 ${urgencyColor} relative group`}>
+                  <div
+                    key={task.id}
+                    onClick={() => startEditTask(task, 'all')}
+                    className={`bg-white p-6 rounded-[2rem] shadow-md border-r-8 ${urgencyColor} relative group cursor-pointer ${blockedBy ? 'opacity-60 grayscale-[40%]' : ''} ${isEditing ? 'ring-2 ring-indigo-300' : ''}`}
+                  >
                     <div className="flex justify-between items-start gap-4 mb-2">
                       <h3 className="font-black text-xl text-slate-800 flex-1">{task.title}</h3>
-                      <button onClick={() => deleteTask(task.id!)} className="px-3 py-1.5 rounded-xl bg-slate-50 text-slate-400 text-[10px] font-black border border-slate-100 hover:bg-red-50 hover:text-red-600 hover:border-red-100 transition-all pointer-events-auto">מחק 🗑️</button>
+                      <button
+                        onClick={(e) => { stop(e); deleteTask(task.id!); }}
+                        className="px-3 py-1.5 rounded-xl bg-slate-50 text-slate-400 text-[10px] font-black border border-slate-100 hover:bg-red-50 hover:text-red-600 hover:border-red-100 transition-all pointer-events-auto"
+                      >
+                        מחק 🗑️
+                      </button>
                     </div>
                     {task.description && <p className="text-sm text-slate-500 mb-4">{task.description}</p>}
+                    {blockedBy && (
+                      <div className="bg-amber-50 border border-amber-200 text-amber-800 px-3 py-2 rounded-xl text-xs font-bold mb-3 flex items-center gap-2">
+                        <span>⏳ ממתין למשימה:</span>
+                        <span className="font-black">{blockedBy.title}</span>
+                      </div>
+                    )}
                     <div className="flex flex-wrap gap-2 text-[10px] font-black text-slate-400">
-                      <span className="bg-slate-50 px-2 py-1 rounded-full">👤 {task.assignee}</span>
-                      <span className="bg-slate-50 px-2 py-1 rounded-full">📅 {task.target_date}</span>
-                      <span className="bg-slate-50 px-2 py-1 rounded-full">🔥 {task.urgency}</span>
+                      <button type="button" onClick={(e) => { stop(e); startEditTask(task, 'assignee'); }} className={`bg-slate-50 ${chipBase}`}>👤 {task.assignee}</button>
+                      <button type="button" onClick={(e) => { stop(e); startEditTask(task, 'date'); }} className={`bg-slate-50 ${chipBase}`}>📅 {task.target_date}</button>
+                      <button type="button" onClick={(e) => { stop(e); startEditTask(task, 'urgency'); }} className={`bg-slate-50 ${chipBase}`}>{urgencyEmoji(task.urgency)} {task.urgency}</button>
                     </div>
-                    <div className="flex bg-slate-100 p-1 rounded-2xl mt-5 gap-1">
-                      <button onClick={() => updateTaskStatus(task.id!, 'לא התחלתי')} className={`flex-1 py-2.5 rounded-xl text-[11px] font-black transition-all ${task.status === 'לא התחלתי' || !task.status ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-400'}`}>{isPlural ? 'לא התחלנו' : 'לא התחלתי'}</button>
-                      <button onClick={() => updateTaskStatus(task.id!, 'בתהליך')} className={`flex-1 py-2.5 rounded-xl text-[11px] font-black transition-all ${task.status === 'בתהליך' ? 'bg-blue-500 text-white shadow-sm' : 'text-slate-400'}`}>בתהליך</button>
-                      <button onClick={() => updateTaskStatus(task.id!, 'סיימתי')} className="flex-1 py-2.5 rounded-xl text-[11px] font-black text-slate-400 hover:bg-emerald-500 hover:text-white transition-all">{isPlural ? 'סיימנו' : 'סיימתי'}</button>
+
+                    {isEditing && draft && (
+                      <div onClick={stop} className="mt-5 pt-5 border-t border-slate-200 space-y-3">
+                        <input
+                          autoFocus={editTaskFocus === 'all' || editTaskFocus === 'title'}
+                          value={draft.title}
+                          onChange={e => setEditTaskDraft({ ...draft, title: e.target.value })}
+                          placeholder="שם המשימה"
+                          className="w-full p-3 bg-slate-50 rounded-xl font-bold text-sm pointer-events-auto"
+                        />
+                        <textarea
+                          value={draft.description || ''}
+                          onChange={e => setEditTaskDraft({ ...draft, description: e.target.value })}
+                          placeholder="תיאור (אופציונלי)"
+                          className="w-full p-3 bg-slate-50 rounded-xl text-sm pointer-events-auto"
+                        />
+                        <div className="grid grid-cols-2 gap-2">
+                          <select
+                            autoFocus={editTaskFocus === 'urgency'}
+                            value={draft.urgency}
+                            onChange={e => setEditTaskDraft({ ...draft, urgency: e.target.value })}
+                            className={`p-3 bg-slate-50 rounded-xl font-bold text-sm pointer-events-auto ${editTaskFocus === 'urgency' ? 'ring-2 ring-indigo-300' : ''}`}
+                          >
+                            <option>דחופה מאד</option><option>גבוהה</option><option>סטנדרטית</option><option>נמוכה</option>
+                          </select>
+                          <select
+                            autoFocus={editTaskFocus === 'assignee'}
+                            value={draft.assignee}
+                            onChange={e => setEditTaskDraft({ ...draft, assignee: e.target.value })}
+                            className={`p-3 bg-slate-50 rounded-xl font-bold text-sm pointer-events-auto ${editTaskFocus === 'assignee' ? 'ring-2 ring-indigo-300' : ''}`}
+                          >
+                            <option>שוקי</option><option>הילה</option><option>כולם</option>
+                          </select>
+                        </div>
+                        <input
+                          type="date"
+                          autoFocus={editTaskFocus === 'date'}
+                          value={draft.target_date}
+                          onChange={e => setEditTaskDraft({ ...draft, target_date: e.target.value })}
+                          className={`w-full p-3 bg-slate-50 rounded-xl text-sm font-bold pointer-events-auto ${editTaskFocus === 'date' ? 'ring-2 ring-indigo-300' : ''}`}
+                        />
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[11px] font-black text-slate-500 pr-1">תלות במשימה</label>
+                          <select
+                            autoFocus={editTaskFocus === 'depends'}
+                            value={draft.depends_on_task_id || ''}
+                            onChange={e => setEditTaskDraft({ ...draft, depends_on_task_id: e.target.value || null })}
+                            className="p-3 bg-slate-50 rounded-xl text-sm font-bold pointer-events-auto"
+                          >
+                            <option value="">ללא תלות</option>
+                            {tasks.filter(t => t.id !== task.id && t.status !== 'סיימתי').map(t => (
+                              <option key={t.id} value={t.id}>{t.title}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="flex gap-2 pt-1">
+                          <button type="button" onClick={saveEditTask} className="flex-1 bg-indigo-600 text-white p-3 rounded-xl font-black text-sm pointer-events-auto hover:bg-indigo-700 transition-all">💾 שמור שינויים</button>
+                          <button type="button" onClick={cancelEditTask} className="flex-1 bg-slate-200 text-slate-600 p-3 rounded-xl font-bold text-sm pointer-events-auto hover:bg-slate-300 transition-all">ביטול</button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div onClick={stop} className="flex bg-slate-100 p-1 rounded-2xl mt-5 gap-1">
+                      <button
+                        disabled={!!blockedBy}
+                        onClick={() => updateTaskStatus(task.id!, 'לא התחלתי')}
+                        className={`flex-1 py-2.5 rounded-xl text-[11px] font-black transition-all pointer-events-auto disabled:opacity-50 disabled:cursor-not-allowed ${task.status === 'לא התחלתי' || !task.status ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-400'}`}
+                      >
+                        {isPlural ? 'לא התחלנו' : 'לא התחלתי'}
+                      </button>
+                      <button
+                        disabled={!!blockedBy}
+                        onClick={() => updateTaskStatus(task.id!, 'בתהליך')}
+                        className={`flex-1 py-2.5 rounded-xl text-[11px] font-black transition-all pointer-events-auto disabled:opacity-50 disabled:cursor-not-allowed ${task.status === 'בתהליך' ? 'bg-blue-500 text-white shadow-sm' : 'text-slate-400'}`}
+                      >
+                        בתהליך
+                      </button>
+                      <button
+                        disabled={!!blockedBy}
+                        onClick={() => updateTaskStatus(task.id!, 'סיימתי')}
+                        className="flex-1 py-2.5 rounded-xl text-[11px] font-black text-slate-400 hover:bg-emerald-500 hover:text-white transition-all pointer-events-auto disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isPlural ? 'סיימנו' : 'סיימתי'}
+                      </button>
                     </div>
                   </div>
                 );
