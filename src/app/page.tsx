@@ -828,7 +828,7 @@ export default function HomePage() {
                     <option>שוקי</option><option>הילה</option><option>כולם</option>
                   </select>
                 </div>
-                <input type="date" className="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold" value={newTask.target_date} onChange={e => setNewTask({...newTask, target_date: e.target.value})} />
+                <input type="date" className="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold text-center" value={newTask.target_date} onChange={e => setNewTask({...newTask, target_date: e.target.value})} />
                 <div className="flex flex-col gap-1">
                   <label className="text-[11px] font-black text-slate-500 pr-1">תלות במשימה (אופציונלי)</label>
                   <select
@@ -836,7 +836,7 @@ export default function HomePage() {
                     value={newTask.depends_on_task_id || ''}
                     onChange={e => setNewTask({...newTask, depends_on_task_id: e.target.value || null})}
                   >
-                    <option value="">ללא תלות — אפשר להתחיל מיד</option>
+                    <option value="">ללא תלות</option>
                     {tasks.filter(t => t.status !== 'סיימתי').map(t => (
                       <option key={t.id} value={t.id}>{t.title}</option>
                     ))}
@@ -936,7 +936,7 @@ export default function HomePage() {
                           autoFocus={editTaskFocus === 'date'}
                           value={draft.target_date}
                           onChange={e => setEditTaskDraft({ ...draft, target_date: e.target.value })}
-                          className={`w-full p-3 bg-slate-50 rounded-xl text-sm font-bold pointer-events-auto ${editTaskFocus === 'date' ? 'ring-2 ring-indigo-300' : ''}`}
+                          className={`w-full p-3 bg-slate-50 rounded-xl text-sm font-bold text-center pointer-events-auto ${editTaskFocus === 'date' ? 'ring-2 ring-indigo-300' : ''}`}
                         />
                         <div className="flex flex-col gap-1">
                           <label className="text-[11px] font-black text-slate-500 pr-1">תלות במשימה</label>
