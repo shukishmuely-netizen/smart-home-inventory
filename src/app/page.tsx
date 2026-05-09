@@ -43,7 +43,15 @@ export default function HomePage() {
   const [editTaskFocus, setEditTaskFocus] = useState<EditTaskFocus>('all');
   const [poofingTaskId, setPoofingTaskId] = useState<string | null>(null);
   const [celebration, setCelebration] = useState<{
-    fireworks: { top: number; left: number; delay: number; color: string; particles: { fx: number; fy: number; size: number }[] }[];
+    fireworks: {
+      top: number;
+      left: number;
+      delay: number;
+      color: string;
+      secondaryColor: string;
+      streaks: { angle: number; fly: number; width: number; height: number }[];
+      sparks: { sx: number; sy: number; size: number; delay: number }[];
+    }[];
     balloons: { left: number; delay: number; bx: number; br: number; emoji: string }[];
   } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -434,27 +442,48 @@ export default function HomePage() {
   };
 
   const buildCelebration = () => {
-    const COLORS = ['#ff3b6b', '#ffd23f', '#3ddbff', '#7cf86b', '#ff7ee5', '#ff9533', '#9b6bff', '#5af0c2', '#ff5577'];
+    const COLORS = ['#ff3b6b', '#ffd23f', '#3ddbff', '#7cf86b', '#ff7ee5', '#ff9533', '#9b6bff', '#5af0c2', '#ff5577', '#ff2d8a'];
     const BALLOON_EMOJIS = ['🎈', '🎈', '🎈', '🎉', '🎊'];
-    const fireworks = Array.from({ length: 16 }).map(() => {
+    const fireworks = Array.from({ length: 12 }).map(() => {
       const color = COLORS[Math.floor(Math.random() * COLORS.length)];
-      const particleCount = 14 + Math.floor(Math.random() * 6);
-      const baseDistance = 90 + Math.random() * 80;
-      const particles = Array.from({ length: particleCount }).map((_, i) => {
-        const angle = (i / particleCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
-        const distance = baseDistance * (0.7 + Math.random() * 0.6);
+      let secondaryColor = COLORS[Math.floor(Math.random() * COLORS.length)];
+      while (secondaryColor === color) secondaryColor = COLORS[Math.floor(Math.random() * COLORS.length)];
+
+      // Long radial streaks (the main "rays" of the firework).
+      const streakCount = 38 + Math.floor(Math.random() * 14);
+      const baseFly = 150 + Math.random() * 90;
+      const streaks = Array.from({ length: streakCount }).map((_, i) => {
+        const angle = (i / streakCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.18;
+        const fly = baseFly * (0.75 + Math.random() * 0.55);
         return {
-          fx: Math.cos(angle) * distance,
-          fy: Math.sin(angle) * distance,
-          size: 6 + Math.floor(Math.random() * 6),
+          angle,
+          fly,
+          width: 70 + Math.floor(Math.random() * 40),
+          height: 3 + Math.floor(Math.random() * 2),
         };
       });
+
+      // Bright glowing sparks scattered at random angles/distances.
+      const sparkCount = 18 + Math.floor(Math.random() * 8);
+      const sparks = Array.from({ length: sparkCount }).map(() => {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 30 + Math.random() * 130;
+        return {
+          sx: Math.cos(angle) * dist,
+          sy: Math.sin(angle) * dist,
+          size: 4 + Math.floor(Math.random() * 5),
+          delay: Math.random() * 250,
+        };
+      });
+
       return {
-        top: 10 + Math.random() * 70,
+        top: 10 + Math.random() * 60,
         left: 8 + Math.random() * 84,
-        delay: Math.random() * 1800,
+        delay: 200 + Math.random() * 1800,
         color,
-        particles,
+        secondaryColor,
+        streaks,
+        sparks,
       };
     });
     const balloons = Array.from({ length: 8 }).map(() => ({
@@ -479,7 +508,7 @@ export default function HomePage() {
       window.setTimeout(() => {
         setPoofingTaskId(null);
         setCelebration(null);
-      }, 3200);
+      }, 4200);
       return;
     }
     setTasks(prev => prev.map(t => t.id === id ? { ...t, status: newStatus } : t));
@@ -611,30 +640,87 @@ export default function HomePage() {
         <div className="fixed inset-0 z-[2000] pointer-events-none overflow-hidden">
           {celebration.fireworks.map((fw, i) => (
             <div key={`fw-${i}`} className="absolute" style={{ top: `${fw.top}%`, left: `${fw.left}%` }}>
+              {/* Launch trail (rocket rising) */}
+              <span
+                className="absolute animate-firework-launch"
+                style={{
+                  width: '4px',
+                  height: '90px',
+                  top: 0,
+                  left: 0,
+                  background: `linear-gradient(to top, transparent 0%, ${fw.color} 60%, #fff 100%)`,
+                  borderRadius: '4px',
+                  boxShadow: `0 0 14px ${fw.color}`,
+                  transformOrigin: '50% 100%',
+                  animationDelay: `${Math.max(0, fw.delay - 600)}ms`,
+                }}
+              />
+
+              {/* White-hot core */}
               <span
                 className="absolute rounded-full animate-firework-flash"
                 style={{
-                  width: '14px',
-                  height: '14px',
-                  background: `radial-gradient(circle, #fff 0%, ${fw.color} 60%, transparent 100%)`,
-                  boxShadow: `0 0 30px 8px ${fw.color}`,
-                  animationDelay: `${fw.delay}ms`,
+                  width: '24px',
+                  height: '24px',
                   top: 0,
                   left: 0,
+                  background: 'radial-gradient(circle, #ffffff 0%, #ffffff 30%, transparent 80%)',
+                  boxShadow: `0 0 50px 16px #fff, 0 0 90px 30px ${fw.color}`,
+                  animationDelay: `${fw.delay}ms`,
                 }}
               />
-              {fw.particles.map((p, pi) => (
+
+              {/* Outer colored halo */}
+              <span
+                className="absolute rounded-full animate-firework-flash"
+                style={{
+                  width: '60px',
+                  height: '60px',
+                  top: 0,
+                  left: 0,
+                  background: `radial-gradient(circle, ${fw.color} 0%, ${fw.secondaryColor} 50%, transparent 80%)`,
+                  boxShadow: `0 0 60px 20px ${fw.color}`,
+                  animationDelay: `${fw.delay + 30}ms`,
+                  opacity: 0.7,
+                }}
+              />
+
+              {/* Long comet-like streaks radiating outward */}
+              {fw.streaks.map((s, si) => (
                 <span
-                  key={pi}
-                  className="absolute rounded-full animate-firework-particle"
+                  key={`s-${si}`}
+                  className="absolute animate-firework-streak"
                   style={{
-                    width: `${p.size}px`,
-                    height: `${p.size}px`,
-                    backgroundColor: fw.color,
+                    top: 0,
+                    left: 0,
+                    width: `${s.width}px`,
+                    height: `${s.height}px`,
+                    background: `linear-gradient(to right, transparent 0%, ${fw.color} 35%, ${fw.color} 70%, #ffffff 100%)`,
+                    borderRadius: '999px',
                     boxShadow: `0 0 12px ${fw.color}, 0 0 4px #fff`,
+                    transformOrigin: '0 50%',
                     animationDelay: `${fw.delay}ms`,
-                    ['--fx' as any]: `${p.fx}px`,
-                    ['--fy' as any]: `${p.fy}px`,
+                    ['--angle' as any]: `${s.angle}rad`,
+                    ['--fly' as any]: `${s.fly}px`,
+                  }}
+                />
+              ))}
+
+              {/* Bright glowing sparks scattered around the burst */}
+              {fw.sparks.map((sp, spi) => (
+                <span
+                  key={`sp-${spi}`}
+                  className="absolute rounded-full animate-firework-spark"
+                  style={{
+                    top: 0,
+                    left: 0,
+                    width: `${sp.size}px`,
+                    height: `${sp.size}px`,
+                    background: `radial-gradient(circle, #ffffff 10%, ${fw.secondaryColor} 70%)`,
+                    boxShadow: `0 0 ${sp.size * 2}px ${fw.color}, 0 0 4px #fff`,
+                    animationDelay: `${fw.delay + sp.delay}ms`,
+                    ['--sx' as any]: `${sp.sx}px`,
+                    ['--sy' as any]: `${sp.sy}px`,
                   }}
                 />
               ))}
