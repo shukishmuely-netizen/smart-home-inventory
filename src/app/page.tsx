@@ -41,6 +41,7 @@ export default function HomePage() {
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [editTaskDraft, setEditTaskDraft] = useState<Task | null>(null);
   const [editTaskFocus, setEditTaskFocus] = useState<EditTaskFocus>('all');
+  const [poofingTaskId, setPoofingTaskId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState('');
   const [editingCatItemId, setEditingCatItemId] = useState<string | null>(null);
@@ -429,6 +430,16 @@ export default function HomePage() {
   };
 
   const updateTaskStatus = async (id: string, newStatus: string) => {
+    if (newStatus === 'סיימתי') {
+      setPoofingTaskId(id);
+      // Persist in background while the animation plays.
+      supabase.from('tasks').update({ status: newStatus }).eq('id', id).then(() => {});
+      window.setTimeout(() => {
+        setTasks(prev => prev.map(t => t.id === id ? { ...t, status: newStatus } : t));
+        setPoofingTaskId(null);
+      }, 850);
+      return;
+    }
     setTasks(prev => prev.map(t => t.id === id ? { ...t, status: newStatus } : t));
     await supabase.from('tasks').update({ status: newStatus }).eq('id', id);
   };
@@ -844,15 +855,27 @@ export default function HomePage() {
                 const isPlural = (task.assignee || '').includes('כולם');
                 const blockedBy = getBlockingTask(task);
                 const isEditing = editingTaskId === task.id;
+                const isPoofing = poofingTaskId === task.id;
                 const draft = isEditing ? editTaskDraft : null;
                 const stop = (e: React.MouseEvent) => e.stopPropagation();
                 const chipBase = "px-2 py-1 rounded-full pointer-events-auto transition-colors hover:bg-slate-200";
                 return (
                   <div
                     key={task.id}
-                    onClick={() => startEditTask(task, 'all')}
-                    className={`bg-white p-6 rounded-[2rem] shadow-md border-r-8 ${urgencyColor} relative group cursor-pointer ${blockedBy ? 'opacity-60 grayscale-[40%]' : ''} ${isEditing ? 'ring-2 ring-indigo-300' : ''}`}
+                    onClick={() => !isPoofing && startEditTask(task, 'all')}
+                    className={`bg-white p-6 rounded-[2rem] shadow-md border-r-8 ${urgencyColor} relative group cursor-pointer ${blockedBy ? 'opacity-60 grayscale-[40%]' : ''} ${isEditing ? 'ring-2 ring-indigo-300' : ''} ${isPoofing ? 'animate-task-poof overflow-hidden' : ''}`}
                   >
+                    {isPoofing && (
+                      <div className="absolute inset-0 pointer-events-none z-20 overflow-hidden">
+                        <span className="absolute text-5xl animate-poof-cloud" style={{ top: '20%', left: '15%' }}>☁️</span>
+                        <span className="absolute text-5xl animate-poof-cloud" style={{ top: '25%', right: '15%', animationDelay: '60ms' }}>☁️</span>
+                        <span className="absolute text-4xl animate-poof-cloud" style={{ bottom: '25%', left: '30%', animationDelay: '120ms' }}>💨</span>
+                        <span className="absolute text-4xl animate-poof-cloud" style={{ bottom: '20%', right: '30%', animationDelay: '90ms' }}>💨</span>
+                        <span className="absolute text-3xl animate-poof-sparkle" style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>✨</span>
+                        <span className="absolute text-2xl animate-poof-sparkle" style={{ top: '15%', right: '40%', animationDelay: '180ms' }}>✨</span>
+                        <span className="absolute text-2xl animate-poof-sparkle" style={{ bottom: '15%', left: '45%', animationDelay: '220ms' }}>✨</span>
+                      </div>
+                    )}
                     <div className="flex justify-between items-start gap-4 mb-2">
                       <h3 className="font-black text-xl text-slate-800 flex-1">{task.title}</h3>
                       <button

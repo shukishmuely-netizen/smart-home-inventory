@@ -24,3 +24,35 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Task completion poof animation */
+@keyframes task-poof {
+  0% { opacity: 1; transform: scale(1); filter: blur(0); }
+  35% { opacity: 0.85; transform: scale(1.02); filter: blur(0.5px); }
+  100% { opacity: 0; transform: scale(0.85) rotate(-1deg); filter: blur(4px); }
+}
+
+@keyframes poof-cloud {
+  0% { opacity: 0; transform: scale(0.2) translateY(0); }
+  25% { opacity: 1; transform: scale(1.1) translateY(-4px); }
+  100% { opacity: 0; transform: scale(2.2) translateY(-30px); }
+}
+
+@keyframes poof-sparkle {
+  0% { opacity: 0; transform: scale(0.1) rotate(0deg); }
+  35% { opacity: 1; transform: scale(1.2) rotate(45deg); }
+  100% { opacity: 0; transform: scale(0.4) rotate(180deg); }
+}
+
+.animate-task-poof {
+  animation: task-poof 850ms ease-in forwards;
+  pointer-events: none;
+}
+
+.animate-poof-cloud {
+  animation: poof-cloud 850ms ease-out forwards;
+}
+
+.animate-poof-sparkle {
+  animation: poof-sparkle 700ms ease-out forwards;
+}
