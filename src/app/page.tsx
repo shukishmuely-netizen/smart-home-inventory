@@ -42,6 +42,10 @@ export default function HomePage() {
   const [editTaskDraft, setEditTaskDraft] = useState<Task | null>(null);
   const [editTaskFocus, setEditTaskFocus] = useState<EditTaskFocus>('all');
   const [poofingTaskId, setPoofingTaskId] = useState<string | null>(null);
+  const [celebration, setCelebration] = useState<{
+    fireworks: { top: number; left: number; delay: number; color: string; particles: { fx: number; fy: number; size: number }[] }[];
+    balloons: { left: number; delay: number; bx: number; br: number; emoji: string }[];
+  } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState('');
   const [editingCatItemId, setEditingCatItemId] = useState<string | null>(null);
@@ -429,15 +433,53 @@ export default function HomePage() {
     return dep;
   };
 
+  const buildCelebration = () => {
+    const COLORS = ['#ff3b6b', '#ffd23f', '#3ddbff', '#7cf86b', '#ff7ee5', '#ff9533', '#9b6bff', '#5af0c2', '#ff5577'];
+    const BALLOON_EMOJIS = ['🎈', '🎈', '🎈', '🎉', '🎊'];
+    const fireworks = Array.from({ length: 16 }).map(() => {
+      const color = COLORS[Math.floor(Math.random() * COLORS.length)];
+      const particleCount = 14 + Math.floor(Math.random() * 6);
+      const baseDistance = 90 + Math.random() * 80;
+      const particles = Array.from({ length: particleCount }).map((_, i) => {
+        const angle = (i / particleCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
+        const distance = baseDistance * (0.7 + Math.random() * 0.6);
+        return {
+          fx: Math.cos(angle) * distance,
+          fy: Math.sin(angle) * distance,
+          size: 6 + Math.floor(Math.random() * 6),
+        };
+      });
+      return {
+        top: 10 + Math.random() * 70,
+        left: 8 + Math.random() * 84,
+        delay: Math.random() * 1800,
+        color,
+        particles,
+      };
+    });
+    const balloons = Array.from({ length: 8 }).map(() => ({
+      left: 5 + Math.random() * 90,
+      delay: Math.random() * 1200,
+      bx: (Math.random() - 0.5) * 120,
+      br: (Math.random() - 0.5) * 30,
+      emoji: BALLOON_EMOJIS[Math.floor(Math.random() * BALLOON_EMOJIS.length)],
+    }));
+    return { fireworks, balloons };
+  };
+
   const updateTaskStatus = async (id: string, newStatus: string) => {
     if (newStatus === 'סיימתי') {
       setPoofingTaskId(id);
+      setCelebration(buildCelebration());
       // Persist in background while the animation plays.
       supabase.from('tasks').update({ status: newStatus }).eq('id', id).then(() => {});
       window.setTimeout(() => {
         setTasks(prev => prev.map(t => t.id === id ? { ...t, status: newStatus } : t));
+      }, 1500);
+      window.setTimeout(() => {
         setPoofingTaskId(null);
-      }, 850);
+        setCelebration(null);
+      }, 3200);
       return;
     }
     setTasks(prev => prev.map(t => t.id === id ? { ...t, status: newStatus } : t));
@@ -565,6 +607,54 @@ export default function HomePage() {
 
   return (
     <main className="min-h-screen bg-slate-50 font-sans pb-20 text-slate-900" dir="rtl">
+      {celebration && (
+        <div className="fixed inset-0 z-[2000] pointer-events-none overflow-hidden">
+          {celebration.fireworks.map((fw, i) => (
+            <div key={`fw-${i}`} className="absolute" style={{ top: `${fw.top}%`, left: `${fw.left}%` }}>
+              <span
+                className="absolute rounded-full animate-firework-flash"
+                style={{
+                  width: '14px',
+                  height: '14px',
+                  background: `radial-gradient(circle, #fff 0%, ${fw.color} 60%, transparent 100%)`,
+                  boxShadow: `0 0 30px 8px ${fw.color}`,
+                  animationDelay: `${fw.delay}ms`,
+                  top: 0,
+                  left: 0,
+                }}
+              />
+              {fw.particles.map((p, pi) => (
+                <span
+                  key={pi}
+                  className="absolute rounded-full animate-firework-particle"
+                  style={{
+                    width: `${p.size}px`,
+                    height: `${p.size}px`,
+                    backgroundColor: fw.color,
+                    boxShadow: `0 0 12px ${fw.color}, 0 0 4px #fff`,
+                    animationDelay: `${fw.delay}ms`,
+                    ['--fx' as any]: `${p.fx}px`,
+                    ['--fy' as any]: `${p.fy}px`,
+                  }}
+                />
+              ))}
+            </div>
+          ))}
+          {celebration.balloons.map((b, i) => (
+            <span
+              key={`bl-${i}`}
+              className="absolute text-5xl animate-balloon-rise"
+              style={{
+                left: `${b.left}%`,
+                bottom: 0,
+                animationDelay: `${b.delay}ms`,
+                ['--bx' as any]: `${b.bx}px`,
+                ['--br' as any]: `${b.br}deg`,
+              }}
+            >{b.emoji}</span>
+          ))}
+        </div>
+      )}
       <header className={`bg-gradient-to-r ${headerGradient} text-white shadow-xl sticky top-0 z-[1000] transition-colors duration-500`}>
         <div className="max-w-2xl mx-auto p-4 flex flex-col gap-3">
           <div className="flex justify-between items-center relative">
@@ -865,17 +955,6 @@ export default function HomePage() {
                     onClick={() => !isPoofing && startEditTask(task, 'all')}
                     className={`bg-white p-6 rounded-[2rem] shadow-md border-r-8 ${urgencyColor} relative group cursor-pointer ${blockedBy ? 'opacity-60 grayscale-[40%]' : ''} ${isEditing ? 'ring-2 ring-indigo-300' : ''} ${isPoofing ? 'animate-task-poof overflow-hidden' : ''}`}
                   >
-                    {isPoofing && (
-                      <div className="absolute inset-0 pointer-events-none z-20 overflow-hidden">
-                        <span className="absolute text-5xl animate-poof-cloud" style={{ top: '20%', left: '15%' }}>☁️</span>
-                        <span className="absolute text-5xl animate-poof-cloud" style={{ top: '25%', right: '15%', animationDelay: '60ms' }}>☁️</span>
-                        <span className="absolute text-4xl animate-poof-cloud" style={{ bottom: '25%', left: '30%', animationDelay: '120ms' }}>💨</span>
-                        <span className="absolute text-4xl animate-poof-cloud" style={{ bottom: '20%', right: '30%', animationDelay: '90ms' }}>💨</span>
-                        <span className="absolute text-3xl animate-poof-sparkle" style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>✨</span>
-                        <span className="absolute text-2xl animate-poof-sparkle" style={{ top: '15%', right: '40%', animationDelay: '180ms' }}>✨</span>
-                        <span className="absolute text-2xl animate-poof-sparkle" style={{ bottom: '15%', left: '45%', animationDelay: '220ms' }}>✨</span>
-                      </div>
-                    )}
                     <div className="flex justify-between items-start gap-4 mb-2">
                       <h3 className="font-black text-xl text-slate-800 flex-1">{task.title}</h3>
                       <button
