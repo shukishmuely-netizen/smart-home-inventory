@@ -578,12 +578,7 @@ export default function HomePage() {
 
   const filteredInventory = safeInventory
     .filter(i => (i.item_name || '').includes(searchTerm) && (invFilter === 'הכל' || i.location === invFilter))
-    .sort((a, b) => {
-      const aLow = (a.quantity || 0) <= 2 ? 0 : 1;
-      const bLow = (b.quantity || 0) <= 2 ? 0 : 1;
-      if (aLow !== bLow) return aLow - bLow;
-      return (a.item_name || '').localeCompare(b.item_name || '', 'he');
-    });
+    .sort((a, b) => (a.item_name || '').localeCompare(b.item_name || '', 'he'));
 
   const filteredShoppingList = safeShoppingList
     .filter(s => (s.item_name || '').includes(searchTerm))
