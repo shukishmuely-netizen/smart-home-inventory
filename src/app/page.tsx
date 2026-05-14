@@ -42,6 +42,9 @@ export default function HomePage() {
   const [editTaskDraft, setEditTaskDraft] = useState<Task | null>(null);
   const [editTaskFocus, setEditTaskFocus] = useState<EditTaskFocus>('all');
   const [poofingTaskId, setPoofingTaskId] = useState<string | null>(null);
+  const [categoryAddOpen, setCategoryAddOpen] = useState<string | null>(null);
+  const [categoryAddInput, setCategoryAddInput] = useState('');
+  const [categoryAddLoading, setCategoryAddLoading] = useState(false);
   const [celebration, setCelebration] = useState<{
     fireworks: { top: number; left: number; delay: number; color: string; particles: { fx: number; fy: number; size: number }[] }[];
     balloons: { left: number; delay: number; bx: number; br: number; emoji: string }[];
@@ -332,6 +335,55 @@ export default function HomePage() {
     }
     await saveItemWithCategory({ ...task.item, name: chosen, item_name: chosen });
     if (wordChoiceTasks.length <= 1) showStatus('✅ נוסף לקניות', true);
+  };
+
+  const handleCategoryAdd = async (e: React.FormEvent, category: string) => {
+    e.preventDefault();
+    const text = categoryAddInput.trim();
+    if (!text || categoryAddLoading) return;
+    setCategoryAddLoading(true);
+    showStatus('מעבד...', false);
+    const normalize = (n: string) => (n || '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
+    try {
+      const res = await fetch('/api/parse', { method: 'POST', body: JSON.stringify({ text, categories }) });
+      const data = await res.json();
+      const items = (data && data.items) || [];
+      if (items.length === 0) {
+        showStatus('❌ לא זוהו פריטים', true);
+        return;
+      }
+      const duplicates: string[] = [];
+      let addedCount = 0;
+      for (const item of items) {
+        const name = item.name || item.item_name || 'פריט';
+        const baseName = normalize(name);
+        if (shoppingList.some(s => normalize(s.item_name || '') === baseName)) {
+          duplicates.push(name);
+          continue;
+        }
+        const qty = Number(item.quantity) > 1 ? Number(item.quantity) : 1;
+        const finalName = qty > 1 ? `${name} (${qty})` : name;
+        await supabase.from('shopping_list').insert([{ item_name: finalName, category }]);
+        addedCount++;
+      }
+      if (duplicates.length > 0) {
+        setDuplicateShoppingAlerts(prev => Array.from(new Set([...prev, ...duplicates])));
+      }
+      if (addedCount > 0) {
+        showStatus(`✅ נוספו ${addedCount} ל"${category}"`, true);
+      } else if (duplicates.length > 0) {
+        showStatus('⚠️ כבר ברשימה', true);
+      } else {
+        showStatus('✅ עודכן', true);
+      }
+      setCategoryAddInput('');
+      setCategoryAddOpen(null);
+      fetchData();
+    } catch {
+      showStatus('❌ שגיאה בחיבור', true);
+    } finally {
+      setCategoryAddLoading(false);
+    }
   };
 
   const addToShopping = async (item: Item) => {
@@ -875,13 +927,46 @@ export default function HomePage() {
               <div className="space-y-8">
                 {displayCategories.map(cat => {
                   const list = filteredShoppingList.filter(s => (s.category || 'כללי') === cat);
-                  if (list.length === 0) return null;
+                  const isAddOpen = categoryAddOpen === cat;
+                  if (list.length === 0 && !isAddOpen && searchTerm) return null;
                   return (
                     <div key={`shop-cat-${cat}`} className="space-y-3">
-                      <h3 className="font-black text-rose-700 text-sm uppercase pr-2 border-r-4 border-rose-400">{cat}</h3>
-                      <div className="grid gap-3">
-                        {list.map(s => <ShoppingCard key={s.id} item={s} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} editingCatItemId={editingCatItemId} editCatValue={editCatValue} setEditingCatItemId={setEditingCatItemId} setEditCatValue={setEditCatValue} saveEditedCategory={saveEditedCategory} categories={displayCategories} onDelete={deleteShoppingItem} onMoveToInventory={moveShoppingToInventory} />)}
+                      <div className="flex items-center justify-between gap-2 pr-2">
+                        <h3 className="font-black text-rose-700 text-sm uppercase border-r-4 border-rose-400 pr-2 flex-1">{cat}</h3>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCategoryAddOpen(prev => prev === cat ? null : cat);
+                            setCategoryAddInput('');
+                          }}
+                          className="text-[11px] font-black bg-rose-100 text-rose-700 hover:bg-rose-200 px-3 py-1.5 rounded-xl pointer-events-auto transition-colors"
+                        >
+                          {isAddOpen ? '✕ סגור' : '+ הוסף'}
+                        </button>
                       </div>
+                      {isAddOpen && (
+                        <form onSubmit={(e) => handleCategoryAdd(e, cat)} className="bg-rose-50 border border-rose-200 p-3 rounded-2xl flex flex-wrap gap-2 items-stretch">
+                          <input
+                            autoFocus
+                            value={categoryAddInput}
+                            onChange={(e) => setCategoryAddInput(e.target.value)}
+                            placeholder={`הוסף ל"${cat}" — תפוזים מלפפון תפוח אדמה`}
+                            className="flex-1 min-w-[160px] bg-white p-3 rounded-xl text-sm font-bold border border-rose-100 outline-none focus:ring-2 focus:ring-rose-300 pointer-events-auto"
+                          />
+                          <button
+                            type="submit"
+                            disabled={categoryAddLoading || !categoryAddInput.trim()}
+                            className="bg-rose-600 text-white px-4 py-2 rounded-xl font-black text-sm shadow-sm hover:bg-rose-700 transition-all disabled:bg-rose-300 disabled:cursor-not-allowed pointer-events-auto"
+                          >
+                            {categoryAddLoading ? '...' : 'הוסף ✓'}
+                          </button>
+                        </form>
+                      )}
+                      {list.length > 0 && (
+                        <div className="grid gap-3">
+                          {list.map(s => <ShoppingCard key={s.id} item={s} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} editingCatItemId={editingCatItemId} editCatValue={editCatValue} setEditingCatItemId={setEditingCatItemId} setEditCatValue={setEditCatValue} saveEditedCategory={saveEditedCategory} categories={displayCategories} onDelete={deleteShoppingItem} onMoveToInventory={moveShoppingToInventory} />)}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
