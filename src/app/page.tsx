@@ -337,33 +337,66 @@ export default function HomePage() {
     if (wordChoiceTasks.length <= 1) showStatus('✅ נוסף לקניות', true);
   };
 
+  // Known multi-word product names that stay together when the user types without commas.
+  const KNOWN_COMPOUND_ITEMS = ['תפוח אדמה', 'תפוחי אדמה'];
+
+  const splitShoppingInput = (text: string): string[] => {
+    const trimmed = (text || '').trim();
+    if (!trimmed) return [];
+    // Commas present → each segment between commas is one item, verbatim.
+    if (/[,،]/.test(trimmed)) {
+      return trimmed.split(/[,،]/).map(s => s.trim()).filter(Boolean);
+    }
+    // No commas → every word is its own item, except known compound product names.
+    const tokens = trimmed.split(/\s+/);
+    const items: string[] = [];
+    let i = 0;
+    while (i < tokens.length) {
+      let matched = false;
+      for (const compound of KNOWN_COMPOUND_ITEMS) {
+        const compTokens = compound.split(/\s+/);
+        if (i + compTokens.length <= tokens.length) {
+          const slice = tokens.slice(i, i + compTokens.length).join(' ');
+          if (slice === compound) {
+            items.push(compound);
+            i += compTokens.length;
+            matched = true;
+            break;
+          }
+        }
+      }
+      if (!matched) {
+        items.push(tokens[i]);
+        i++;
+      }
+    }
+    return items;
+  };
+
   const handleCategoryAdd = async (e: React.FormEvent, category: string) => {
     e.preventDefault();
     const text = categoryAddInput.trim();
     if (!text || categoryAddLoading) return;
     setCategoryAddLoading(true);
-    showStatus('מעבד...', false);
     const normalize = (n: string) => (n || '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
     try {
-      const res = await fetch('/api/parse', { method: 'POST', body: JSON.stringify({ text, categories }) });
-      const data = await res.json();
-      const items = (data && data.items) || [];
-      if (items.length === 0) {
+      const names = splitShoppingInput(text);
+      if (names.length === 0) {
         showStatus('❌ לא זוהו פריטים', true);
         return;
       }
       const duplicates: string[] = [];
+      const queuedBase = new Set<string>();
       let addedCount = 0;
-      for (const item of items) {
-        const name = item.name || item.item_name || 'פריט';
+      for (const name of names) {
         const baseName = normalize(name);
+        if (!baseName || queuedBase.has(baseName)) continue;
         if (shoppingList.some(s => normalize(s.item_name || '') === baseName)) {
           duplicates.push(name);
           continue;
         }
-        const qty = Number(item.quantity) > 1 ? Number(item.quantity) : 1;
-        const finalName = qty > 1 ? `${name} (${qty})` : name;
-        await supabase.from('shopping_list').insert([{ item_name: finalName, category }]);
+        queuedBase.add(baseName);
+        await supabase.from('shopping_list').insert([{ item_name: name, category }]);
         addedCount++;
       }
       if (duplicates.length > 0) {
@@ -950,7 +983,7 @@ export default function HomePage() {
                             autoFocus
                             value={categoryAddInput}
                             onChange={(e) => setCategoryAddInput(e.target.value)}
-                            placeholder={`הוסף ל"${cat}" — תפוזים מלפפון תפוח אדמה`}
+                            placeholder={`הוסף ל"${cat}" — תפוזים אפרסק, קישוא צהוב`}
                             className="flex-1 min-w-[160px] bg-white p-3 rounded-xl text-sm font-bold border border-rose-100 outline-none focus:ring-2 focus:ring-rose-300 pointer-events-auto"
                           />
                           <button
