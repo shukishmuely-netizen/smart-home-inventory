@@ -31,7 +31,6 @@ export default function HomePage() {
   const [wordChoiceTasks, setWordChoiceTasks] = useState<WordChoiceTask[]>([]);
   const [equipmentItems, setEquipmentItems] = useState<EquipmentItem[]>([]);
   const [equipListType, setEquipListType] = useState<'חו"ל' | 'חד"כ' | 'סופ"ש'>('חד"כ');
-  const [showResetDialog, setShowResetDialog] = useState<string | null>(null);
   const EQUIP_CATEGORIES = ['ניאו', 'חשמל', 'בגדים', 'תרופות', 'נעליים', 'ציוד נוסף'];
 
   const [newTask, setNewTask] = useState<Task>({
@@ -590,27 +589,28 @@ export default function HomePage() {
   };
 
   // --- Equipment functions ---
-  const checkEquipmentSession = async (listType: string) => {
-    const { data } = await supabase.from('equipment_sessions').select('*').eq('list_type', listType).single();
-    const todayStr = new Date().toISOString().split('T')[0];
-    if (data && data.last_pack_date !== todayStr) {
-      setShowResetDialog(listType);
-    }
-  };
-
   const resetPacking = async (listType: string) => {
     await supabase.from('equipment_items').update({ is_packed: false }).eq('list_type', listType);
     setEquipmentItems(prev => prev.map(i => i.list_type === listType ? { ...i, is_packed: false } : i));
     const todayStr = new Date().toISOString().split('T')[0];
     await supabase.from('equipment_sessions').upsert({ list_type: listType, last_pack_date: todayStr, household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72' }, { onConflict: 'list_type,household_id' });
-    setShowResetDialog(null);
   };
 
-  const dismissResetDialog = async (listType: string) => {
-    const todayStr = new Date().toISOString().split('T')[0];
-    await supabase.from('equipment_sessions').upsert({ list_type: listType, last_pack_date: todayStr, household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72' }, { onConflict: 'list_type,household_id' });
-    setShowResetDialog(null);
-  };
+  // Auto-reset the active equipment list when entering the view or switching
+  // tabs, if a day has passed since it was last marked.
+  useEffect(() => {
+    if (activeView !== 'EQUIPMENT') return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.from('equipment_sessions').select('*').eq('list_type', equipListType).single();
+      if (cancelled) return;
+      const todayStr = new Date().toISOString().split('T')[0];
+      if (data && data.last_pack_date !== todayStr) {
+        await resetPacking(equipListType);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeView, equipListType]);
 
   const togglePacked = async (item: EquipmentItem) => {
     const newPacked = !item.is_packed;
@@ -1228,22 +1228,10 @@ export default function HomePage() {
 
         {activeView === 'EQUIPMENT' && (
           <div className="space-y-6">
-            {/* Reset dialog */}
-            {showResetDialog && (
-              <div className="bg-sky-50 border-2 border-sky-200 p-6 rounded-[2rem] shadow-lg animate-bounce-short">
-                <p className="font-black text-lg text-sky-900 mb-4">התחלת אריזה חדשה?</p>
-                <p className="text-sm text-sky-700 mb-4">נראה שארזת לאחרונה. רוצה לאפס את הסימונים ולהתחיל מחדש?</p>
-                <div className="flex gap-2">
-                  <button onClick={() => resetPacking(showResetDialog)} className="flex-1 bg-sky-600 text-white px-4 py-3 rounded-xl font-black text-sm">כן, אריזה חדשה</button>
-                  <button onClick={() => dismissResetDialog(showResetDialog)} className="flex-1 bg-slate-200 text-slate-600 px-4 py-3 rounded-xl font-bold text-sm">לא, להמשיך מאיפה שהפסקתי</button>
-                </div>
-              </div>
-            )}
-
             {/* List type tabs */}
             <div className="flex gap-1 p-1 bg-white rounded-xl shadow-sm border border-slate-100">
               {(['חו"ל', 'חד"כ', 'סופ"ש'] as const).map(lt => (
-                <button key={lt} onClick={() => { setEquipListType(lt); checkEquipmentSession(lt); }} className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all pointer-events-auto ${equipListType === lt ? 'bg-sky-500 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>{lt}</button>
+                <button key={lt} onClick={() => setEquipListType(lt)} className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all pointer-events-auto ${equipListType === lt ? 'bg-sky-500 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>{lt}</button>
               ))}
             </div>
 
@@ -1257,7 +1245,7 @@ export default function HomePage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setShowResetDialog(equipListType)}
+                    onClick={() => resetPacking(equipListType)}
                     disabled={packedEquip.length === 0}
                     className="p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto bg-amber-500 hover:bg-amber-600 disabled:bg-slate-300 disabled:cursor-not-allowed"
                     title="אפס את כל הסימונים"
@@ -1302,7 +1290,7 @@ export default function HomePage() {
               );
             })}
 
-            {unpackedEquip.length === 0 && !showResetDialog && (
+            {unpackedEquip.length === 0 && (
               <div className="text-center py-12 text-slate-400">
                 <span className="text-4xl block mb-3">🧳</span>
                 <span className="font-bold text-sm">הרשימה ריקה. הוסף ציוד בטקסט חופשי למעלה</span>
