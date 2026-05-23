@@ -44,6 +44,14 @@ export default function HomePage() {
   const [categoryAddOpen, setCategoryAddOpen] = useState<string | null>(null);
   const [categoryAddInput, setCategoryAddInput] = useState('');
   const [categoryAddLoading, setCategoryAddLoading] = useState(false);
+  const emptyQuickAddRow = () => ({ name: '', category: '', newCategory: '' });
+  const [quickAddRows, setQuickAddRows] = useState<{ name: string; category: string; newCategory: string }[]>(
+    [emptyQuickAddRow(), emptyQuickAddRow(), emptyQuickAddRow()]
+  );
+  const [quickAddSubmitting, setQuickAddSubmitting] = useState(false);
+  const [showCategorize, setShowCategorize] = useState(false);
+  const [categorizeAssignments, setCategorizeAssignments] = useState<Record<string, string>>({});
+  const [categorizeNewCats, setCategorizeNewCats] = useState<Record<string, string>>({});
   const [celebration, setCelebration] = useState<{
     fireworks: { top: number; left: number; delay: number; color: string; particles: { fx: number; fy: number; size: number }[] }[];
     balloons: { left: number; delay: number; bx: number; br: number; emoji: string }[];
@@ -376,6 +384,96 @@ export default function HomePage() {
       }
     }
     return items;
+  };
+
+  const updateQuickAddRow = (idx: number, patch: Partial<{ name: string; category: string; newCategory: string }>) => {
+    setQuickAddRows(prev => prev.map((r, i) => i === idx ? { ...r, ...patch } : r));
+  };
+
+  const handleQuickAddSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (quickAddSubmitting) return;
+    const rows = quickAddRows.filter(r => r.name.trim());
+    if (rows.length === 0) return;
+    setQuickAddSubmitting(true);
+    showStatus('מעבד...', false);
+    const normalize = (n: string) => (n || '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
+    const duplicates: string[] = [];
+    const queued = new Set<string>();
+    let added = 0;
+    try {
+      for (const row of rows) {
+        const name = row.name.trim();
+        let cat = 'כללי';
+        if (row.category === '__other__') {
+          const custom = row.newCategory.trim();
+          if (custom) cat = custom;
+        } else if (row.category) {
+          cat = row.category;
+        }
+        const base = normalize(name);
+        if (!base || queued.has(base)) continue;
+        if (shoppingList.some(s => normalize(s.item_name || '') === base)) {
+          duplicates.push(name);
+          continue;
+        }
+        queued.add(base);
+        if (cat !== 'כללי' && !categories.includes(cat)) {
+          await supabase.from('category_order').insert([{ category_name: cat, sort_order: 99 }]);
+          setCategories(prev => Array.from(new Set([...prev, cat])));
+        }
+        await supabase.from('shopping_list').insert([{ item_name: name, category: cat }]);
+        added++;
+      }
+      if (duplicates.length > 0) {
+        setDuplicateShoppingAlerts(prev => Array.from(new Set([...prev, ...duplicates])));
+      }
+      if (added > 0) showStatus(`✅ נוספו ${added}`, true);
+      else if (duplicates.length > 0) showStatus('⚠️ כבר ברשימה', true);
+      else showStatus('✅ עודכן', true);
+      setQuickAddRows([emptyQuickAddRow(), emptyQuickAddRow(), emptyQuickAddRow()]);
+      fetchData();
+    } catch {
+      showStatus('❌ שגיאה בשמירה', true);
+    } finally {
+      setQuickAddSubmitting(false);
+    }
+  };
+
+  const openCategorize = () => {
+    setCategorizeAssignments({});
+    setCategorizeNewCats({});
+    setShowCategorize(true);
+  };
+
+  const applyCategorizeAssignments = async () => {
+    const entries = Object.entries(categorizeAssignments).filter(([, v]) => v && v !== 'כללי');
+    if (entries.length === 0) {
+      setShowCategorize(false);
+      setCategorizeAssignments({});
+      return;
+    }
+    showStatus('מעבד...', false);
+    let updated = 0;
+    for (const [id, chosen] of entries) {
+      let target = chosen;
+      if (chosen === '__other__') {
+        const custom = (categorizeNewCats[id] || '').trim();
+        if (!custom) continue;
+        target = custom;
+        if (!categories.includes(target)) {
+          await supabase.from('category_order').insert([{ category_name: target, sort_order: 99 }]);
+          setCategories(prev => Array.from(new Set([...prev, target])));
+        }
+      }
+      await supabase.from('shopping_list').update({ category: target }).eq('id', id);
+      updated++;
+    }
+    setCategorizeAssignments({});
+    setCategorizeNewCats({});
+    setShowCategorize(false);
+    fetchData();
+    showStatus(`✅ סווגו ${updated} פריטים`, true);
   };
 
   const handleCategoryAdd = async (e: React.FormEvent, category: string) => {
@@ -878,12 +976,12 @@ export default function HomePage() {
           </div>
         )}
 
-        {(activeView === 'INVENTORY' || activeView === 'SHOPPING') && (
+        {activeView === 'INVENTORY' && (
           <div className="bg-white p-5 rounded-[2rem] shadow-xl mb-6 border border-slate-50 relative z-20">
             <form onSubmit={handleUpdate} className="space-y-3">
-              <textarea value={input} onChange={e => setInput(e.target.value)} placeholder={activeView === 'INVENTORY' ? "מה הוספנו/הורדנו מהמלאי? (למשל: תוריד את כל המיונז)" : "מה חסר? (למשל: ביצים בקירור, 3 קולה)"} className="w-full p-4 bg-slate-50 rounded-2xl text-sm min-h-[70px] border-none focus:ring-2 focus:ring-amber-300 pointer-events-auto" />
-              <button type="submit" className={`w-full p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto ${activeView === 'INVENTORY' ? 'bg-teal-600 hover:bg-teal-700' : 'bg-rose-600 hover:bg-rose-700'}`}>
-                 {activeView === 'INVENTORY' ? 'עדכן מלאי ✨' : 'הוסף לקניות 🛒'}
+              <textarea value={input} onChange={e => setInput(e.target.value)} placeholder="מה הוספנו/הורדנו מהמלאי? (למשל: תוריד את כל המיונז)" className="w-full p-4 bg-slate-50 rounded-2xl text-sm min-h-[70px] border-none focus:ring-2 focus:ring-amber-300 pointer-events-auto" />
+              <button type="submit" className="w-full p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto bg-teal-600 hover:bg-teal-700">
+                עדכן מלאי ✨
               </button>
             </form>
             {status && (
@@ -893,6 +991,141 @@ export default function HomePage() {
             )}
           </div>
         )}
+
+        {activeView === 'SHOPPING' && (
+          <div className="bg-white p-5 rounded-[2rem] shadow-xl mb-6 border border-slate-50 relative z-20">
+            <form onSubmit={handleQuickAddSubmit} className="space-y-3">
+              {quickAddRows.map((row, i) => {
+                const dropdownCats = displayCategories.filter(c => c && c !== 'uncertain' && c !== 'null' && c !== 'כללי');
+                return (
+                  <div key={`qa-${i}`} className="space-y-2">
+                    <div className="flex gap-2 items-stretch">
+                      <input
+                        type="text"
+                        value={row.name}
+                        onChange={(e) => updateQuickAddRow(i, { name: e.target.value })}
+                        placeholder={i === 0 ? 'פריט לקנייה...' : 'פריט נוסף (אופציונלי)'}
+                        className="flex-1 p-3 bg-slate-50 rounded-xl text-sm font-bold border-none outline-none focus:ring-2 focus:ring-rose-300 pointer-events-auto"
+                      />
+                      <select
+                        value={row.category}
+                        onChange={(e) => updateQuickAddRow(i, { category: e.target.value, newCategory: e.target.value === '__other__' ? row.newCategory : '' })}
+                        className="p-3 bg-slate-50 rounded-xl text-sm font-bold border-none outline-none focus:ring-2 focus:ring-rose-300 pointer-events-auto min-w-[110px]"
+                      >
+                        <option value="">כללי</option>
+                        {dropdownCats.map(c => <option key={c} value={c}>{c}</option>)}
+                        <option value="__other__">+ אחר…</option>
+                      </select>
+                    </div>
+                    {row.category === '__other__' && (
+                      <input
+                        type="text"
+                        value={row.newCategory}
+                        onChange={(e) => updateQuickAddRow(i, { newCategory: e.target.value })}
+                        placeholder="הקלד שם קטגוריה חדשה..."
+                        className="w-full p-3 bg-rose-50 border-2 border-rose-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-rose-300 pointer-events-auto"
+                      />
+                    )}
+                  </div>
+                );
+              })}
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="submit"
+                  disabled={quickAddSubmitting || quickAddRows.every(r => !r.name.trim())}
+                  className="flex-1 p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto bg-rose-600 hover:bg-rose-700 disabled:bg-rose-300 disabled:cursor-not-allowed"
+                >
+                  הוסף לקניות 🛒
+                </button>
+                <button
+                  type="button"
+                  onClick={openCategorize}
+                  className="px-4 py-4 rounded-2xl text-white font-black text-sm active:scale-95 transition-all shadow-md pointer-events-auto bg-indigo-500 hover:bg-indigo-600"
+                  title="חלוקת פריטים מ׳כללי׳ לקטגוריות"
+                >
+                  📁 חלוקה
+                </button>
+              </div>
+            </form>
+            {status && (
+              <div className="mt-4 flex justify-center animate-in fade-in slide-in-from-bottom-2">
+                <span className={`px-4 py-2 rounded-full text-xs font-bold shadow-sm ${status.includes('❌') ? 'bg-red-100 text-red-600' : status.includes('⚠️') || status.includes('🤔') ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700'}`}>{status}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {showCategorize && activeView === 'SHOPPING' && (() => {
+          const klaliItems = filteredShoppingList.filter(s => !s.category || s.category === 'כללי');
+          const dropdownCats = displayCategories.filter(c => c && c !== 'uncertain' && c !== 'null' && c !== 'כללי');
+          return (
+            <div className="mb-6 bg-indigo-50 border-2 border-indigo-200 p-5 rounded-[2rem] shadow-lg">
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="font-black text-lg text-indigo-900">📁 חלוקה לקטגוריות</h3>
+                <button
+                  type="button"
+                  onClick={() => { setShowCategorize(false); setCategorizeAssignments({}); setCategorizeNewCats({}); }}
+                  className="bg-white text-slate-500 hover:bg-slate-100 w-8 h-8 rounded-full font-black pointer-events-auto"
+                >
+                  ✕
+                </button>
+              </div>
+              {klaliItems.length === 0 ? (
+                <p className="text-sm text-slate-500 italic">אין פריטים בכללי 🎉</p>
+              ) : (
+                <>
+                  <p className="text-xs text-indigo-700 mb-3 font-bold">בחר קטגוריה לכל פריט (או השאר ב״כללי״):</p>
+                  <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
+                    {klaliItems.map(item => {
+                      const chosen = categorizeAssignments[item.id] || 'כללי';
+                      return (
+                        <div key={`cz-${item.id}`} className="bg-white p-3 rounded-xl border border-indigo-100 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <span className="flex-1 font-bold text-slate-800 text-sm">{item.item_name}</span>
+                            <select
+                              value={chosen}
+                              onChange={(e) => setCategorizeAssignments(prev => ({ ...prev, [item.id]: e.target.value }))}
+                              className="p-2 bg-slate-50 rounded-lg text-xs font-bold border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300 pointer-events-auto min-w-[100px]"
+                            >
+                              <option value="כללי">כללי</option>
+                              {dropdownCats.map(c => <option key={c} value={c}>{c}</option>)}
+                              <option value="__other__">+ אחר…</option>
+                            </select>
+                          </div>
+                          {chosen === '__other__' && (
+                            <input
+                              type="text"
+                              value={categorizeNewCats[item.id] || ''}
+                              onChange={(e) => setCategorizeNewCats(prev => ({ ...prev, [item.id]: e.target.value }))}
+                              placeholder="קטגוריה חדשה..."
+                              className="w-full p-2 bg-rose-50 border border-rose-200 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-rose-300 pointer-events-auto"
+                            />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="flex gap-2 mt-4 pt-3 border-t border-indigo-200">
+                    <button
+                      type="button"
+                      onClick={applyCategorizeAssignments}
+                      className="flex-1 bg-indigo-600 text-white p-3 rounded-xl font-black text-sm pointer-events-auto hover:bg-indigo-700 transition-colors"
+                    >
+                      💾 שמור שינויים
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setShowCategorize(false); setCategorizeAssignments({}); setCategorizeNewCats({}); }}
+                      className="bg-slate-200 text-slate-600 px-4 py-3 rounded-xl font-bold text-sm pointer-events-auto hover:bg-slate-300 transition-colors"
+                    >
+                      ביטול
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })()}
 
         {wordChoiceTasks.length > 0 && activeView === 'SHOPPING' && (
           <div className="mb-8 space-y-4">
