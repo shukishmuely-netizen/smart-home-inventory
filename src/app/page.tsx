@@ -46,7 +46,7 @@ export default function HomePage() {
   const [categoryAddLoading, setCategoryAddLoading] = useState(false);
   const emptyQuickAddRow = () => ({ name: '', category: '', newCategory: '' });
   const [quickAddRows, setQuickAddRows] = useState<{ name: string; category: string; newCategory: string }[]>(
-    [emptyQuickAddRow(), emptyQuickAddRow(), emptyQuickAddRow()]
+    [emptyQuickAddRow(), emptyQuickAddRow()]
   );
   const [quickAddSubmitting, setQuickAddSubmitting] = useState(false);
   const [showCategorize, setShowCategorize] = useState(false);
@@ -387,7 +387,14 @@ export default function HomePage() {
   };
 
   const updateQuickAddRow = (idx: number, patch: Partial<{ name: string; category: string; newCategory: string }>) => {
-    setQuickAddRows(prev => prev.map((r, i) => i === idx ? { ...r, ...patch } : r));
+    setQuickAddRows(prev => {
+      const next = prev.map((r, i) => i === idx ? { ...r, ...patch } : r);
+      // Auto-grow: typing in the last row appends a new empty row.
+      if (idx === prev.length - 1 && next[idx].name.trim() && next.length < 20) {
+        next.push(emptyQuickAddRow());
+      }
+      return next;
+    });
   };
 
   const handleQuickAddSubmit = async (e: React.FormEvent) => {
@@ -401,16 +408,63 @@ export default function HomePage() {
     const duplicates: string[] = [];
     const queued = new Set<string>();
     let added = 0;
+
+    // Build the list of names that need auto-classification (user didn't pick a category).
+    const needGuess: string[] = [];
+    for (const row of rows) {
+      const userPicked = (row.category && row.category !== '__other__') ||
+        (row.category === '__other__' && row.newCategory.trim());
+      if (!userPicked) needGuess.push(row.name.trim());
+    }
+
+    // Ask the parser to suggest categories for unclassified items.
+    const guesses: Record<string, string> = {};
+    if (needGuess.length > 0) {
+      try {
+        const res = await fetch('/api/parse', {
+          method: 'POST',
+          body: JSON.stringify({ text: needGuess.join(', '), categories }),
+        });
+        const data = await res.json();
+        const items = (data && data.items) || [];
+        for (const it of items) {
+          const itemName = (it.name || it.item_name || '').trim();
+          const rawCat: string = (it.category || '').toString();
+          const isUsable = rawCat &&
+            !['uncertain', 'null', 'לא ידוע'].includes(rawCat.toLowerCase()) &&
+            !it.needs_classification;
+          if (itemName && isUsable) {
+            guesses[normalize(itemName)] = rawCat;
+          }
+        }
+      } catch {
+        // Network error → fall back to 'כללי' for the affected rows.
+      }
+    }
+
     try {
       for (const row of rows) {
         const name = row.name.trim();
         let cat = 'כללי';
+        let categoryAuto = true;
+
         if (row.category === '__other__') {
           const custom = row.newCategory.trim();
-          if (custom) cat = custom;
+          if (custom) {
+            cat = custom;
+            categoryAuto = false;
+          } else {
+            cat = guesses[normalize(name)] || 'כללי';
+            categoryAuto = true;
+          }
         } else if (row.category) {
           cat = row.category;
+          categoryAuto = false;
+        } else {
+          cat = guesses[normalize(name)] || 'כללי';
+          categoryAuto = true;
         }
+
         const base = normalize(name);
         if (!base || queued.has(base)) continue;
         if (shoppingList.some(s => normalize(s.item_name || '') === base)) {
@@ -418,11 +472,15 @@ export default function HomePage() {
           continue;
         }
         queued.add(base);
-        if (cat !== 'כללי' && !categories.includes(cat)) {
+        if (cat && cat !== 'כללי' && !categories.includes(cat)) {
           await supabase.from('category_order').insert([{ category_name: cat, sort_order: 99 }]);
           setCategories(prev => Array.from(new Set([...prev, cat])));
         }
-        await supabase.from('shopping_list').insert([{ item_name: name, category: cat }]);
+        await supabase.from('shopping_list').insert([{
+          item_name: name,
+          category: cat,
+          category_auto: categoryAuto,
+        }]);
         added++;
       }
       if (duplicates.length > 0) {
@@ -431,7 +489,7 @@ export default function HomePage() {
       if (added > 0) showStatus(`✅ נוספו ${added}`, true);
       else if (duplicates.length > 0) showStatus('⚠️ כבר ברשימה', true);
       else showStatus('✅ עודכן', true);
-      setQuickAddRows([emptyQuickAddRow(), emptyQuickAddRow(), emptyQuickAddRow()]);
+      setQuickAddRows([emptyQuickAddRow(), emptyQuickAddRow()]);
       fetchData();
     } catch {
       showStatus('❌ שגיאה בשמירה', true);
@@ -447,10 +505,14 @@ export default function HomePage() {
   };
 
   const applyCategorizeAssignments = async () => {
-    const entries = Object.entries(categorizeAssignments).filter(([, v]) => v && v !== 'כללי');
+    // Any entry in categorizeAssignments means the user actively touched the
+    // dropdown — even picking "כללי" counts as classifying. Untouched rows
+    // stay auto-classified.
+    const entries = Object.entries(categorizeAssignments).filter(([, v]) => !!v);
     if (entries.length === 0) {
       setShowCategorize(false);
       setCategorizeAssignments({});
+      setCategorizeNewCats({});
       return;
     }
     showStatus('מעבד...', false);
@@ -466,7 +528,10 @@ export default function HomePage() {
           setCategories(prev => Array.from(new Set([...prev, target])));
         }
       }
-      await supabase.from('shopping_list').update({ category: target }).eq('id', id);
+      await supabase.from('shopping_list').update({
+        category: target,
+        category_auto: false,
+      }).eq('id', id);
       updated++;
     }
     setCategorizeAssignments({});
@@ -1012,7 +1077,8 @@ export default function HomePage() {
                         onChange={(e) => updateQuickAddRow(i, { category: e.target.value, newCategory: e.target.value === '__other__' ? row.newCategory : '' })}
                         className="p-3 bg-slate-50 rounded-xl text-sm font-bold border-none outline-none focus:ring-2 focus:ring-rose-300 pointer-events-auto min-w-[110px]"
                       >
-                        <option value="">כללי</option>
+                        <option value="">🤖 סיווג אוטומטי</option>
+                        <option value="כללי">כללי</option>
                         {dropdownCats.map(c => <option key={c} value={c}>{c}</option>)}
                         <option value="__other__">+ אחר…</option>
                       </select>
@@ -1056,7 +1122,7 @@ export default function HomePage() {
         )}
 
         {showCategorize && activeView === 'SHOPPING' && (() => {
-          const klaliItems = filteredShoppingList.filter(s => !s.category || s.category === 'כללי');
+          const klaliItems = filteredShoppingList.filter(s => s.category_auto === true || !s.category || s.category === 'כללי');
           const dropdownCats = displayCategories.filter(c => c && c !== 'uncertain' && c !== 'null' && c !== 'כללי');
           return (
             <div className="mb-6 bg-indigo-50 border-2 border-indigo-200 p-5 rounded-[2rem] shadow-lg">
@@ -1071,17 +1137,22 @@ export default function HomePage() {
                 </button>
               </div>
               {klaliItems.length === 0 ? (
-                <p className="text-sm text-slate-500 italic">אין פריטים בכללי 🎉</p>
+                <p className="text-sm text-slate-500 italic">אין פריטים לא מסווגים 🎉</p>
               ) : (
                 <>
-                  <p className="text-xs text-indigo-700 mb-3 font-bold">בחר קטגוריה לכל פריט (או השאר ב״כללי״):</p>
+                  <p className="text-xs text-indigo-700 mb-3 font-bold">פריטים שלא סווגו ידנית. סיווג אוטומטי מופיע ליד השם — בחר/אשר קטגוריה לכל פריט:</p>
                   <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
                     {klaliItems.map(item => {
-                      const chosen = categorizeAssignments[item.id] || 'כללי';
+                      const guessed = item.category && item.category !== 'כללי' ? item.category : null;
+                      const chosen = categorizeAssignments[item.id] ?? (guessed || 'כללי');
                       return (
                         <div key={`cz-${item.id}`} className="bg-white p-3 rounded-xl border border-indigo-100 space-y-2">
-                          <div className="flex items-center gap-2">
-                            <span className="flex-1 font-bold text-slate-800 text-sm">{item.item_name}</span>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-slate-800 text-sm">{item.item_name}</span>
+                            {guessed && (
+                              <span className="text-[10px] font-bold text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full">🤖 משוער: {guessed}</span>
+                            )}
+                            <span className="flex-1" />
                             <select
                               value={chosen}
                               onChange={(e) => setCategorizeAssignments(prev => ({ ...prev, [item.id]: e.target.value }))}
