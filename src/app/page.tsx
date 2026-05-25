@@ -6,13 +6,14 @@ type Item = { id?: string; item_name: string; name?: string; quantity: number; c
 type Task = { id?: string; title: string; description?: string; urgency: string; assignee: string; target_date: string; status: string; depends_on_task_id?: string | null };
 type EditTaskFocus = 'title' | 'urgency' | 'date' | 'assignee' | 'depends' | 'all';
 type EquipmentItem = { id?: string; list_type: string; category: string; item_name: string; is_packed: boolean };
+type ShoppingTemplate = { id: string; name: string; items: { id: string; item_name: string }[] };
 
 type DisambiguationTask = { originalName: string; matches: Item[]; quantityToSubtract: number; removeAll: boolean; };
 type WordChoiceTask = { originalName: string; options: string[]; item: any };
 
 export default function HomePage() {
   const today = new Date().toISOString().split('T')[0];
-  const [activeView, setActiveView] = useState<'HOME' | 'INVENTORY' | 'SHOPPING' | 'TASKS' | 'EQUIPMENT'>('HOME');
+  const [activeView, setActiveView] = useState<'HOME' | 'INVENTORY' | 'SHOPPING' | 'TASKS' | 'EQUIPMENT' | 'TEMPLATES'>('HOME');
   const [invFilter, setInvFilter] = useState<'מקרר' | 'מזווה' | 'הכל'>('הכל');
   const [sortBy, setSortBy] = useState<'name' | 'category'>('name');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -52,6 +53,12 @@ export default function HomePage() {
   const [showCategorize, setShowCategorize] = useState(false);
   const [categorizeAssignments, setCategorizeAssignments] = useState<Record<string, string>>({});
   const [categorizeNewCats, setCategorizeNewCats] = useState<Record<string, string>>({});
+  const [shoppingTemplates, setShoppingTemplates] = useState<ShoppingTemplate[]>([]);
+  const [showCreateTemplate, setShowCreateTemplate] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState('');
+  const [newTemplateItemsText, setNewTemplateItemsText] = useState('');
+  const [addingTemplateId, setAddingTemplateId] = useState<string | null>(null);
+  const [expandedTemplateId, setExpandedTemplateId] = useState<string | null>(null);
   const [celebration, setCelebration] = useState<{
     fireworks: { top: number; left: number; delay: number; color: string; particles: { fx: number; fy: number; size: number }[] }[];
     balloons: { left: number; delay: number; bx: number; br: number; emoji: string }[];
@@ -69,14 +76,16 @@ export default function HomePage() {
   };
 
   const fetchData = async () => {
-    const [invRes, shopRes, catsRes, tskRes, equipRes] = await Promise.all([
+    const [invRes, shopRes, catsRes, tskRes, equipRes, tplRes, tplItemsRes] = await Promise.all([
       supabase.from('inventory_items').select('*'),
       supabase.from('shopping_list').select('*'),
       supabase.from('category_order').select('category_name').order('sort_order'),
       supabase.from('tasks').select('*').order('created_at', { ascending: false }),
-      supabase.from('equipment_items').select('*')
+      supabase.from('equipment_items').select('*'),
+      supabase.from('shopping_templates').select('*').order('created_at'),
+      supabase.from('shopping_template_items').select('*').order('sort_order'),
     ]);
-    
+
     if (invRes.data) {
       const cleanInv = invRes.data.filter((i: any) => {
         if (i.category === 'uncertain' || i.category === 'לא ידוע') {
@@ -91,6 +100,18 @@ export default function HomePage() {
     if (catsRes.data) setCategories(catsRes.data.map(c => c.category_name));
     if (tskRes.data) setTasks(tskRes.data);
     if (equipRes.data) setEquipmentItems(equipRes.data);
+    if (tplRes.data) {
+      const itemsByTemplate: Record<string, { id: string; item_name: string }[]> = {};
+      for (const it of (tplItemsRes.data || []) as any[]) {
+        const tid = it.template_id;
+        (itemsByTemplate[tid] = itemsByTemplate[tid] || []).push({ id: it.id, item_name: it.item_name });
+      }
+      setShoppingTemplates((tplRes.data as any[]).map(t => ({
+        id: t.id,
+        name: t.name,
+        items: itemsByTemplate[t.id] || [],
+      })));
+    }
   };
 
   useEffect(() => { fetchData(); }, []);
@@ -440,6 +461,114 @@ export default function HomePage() {
     }
   };
 
+  const addTemplateToShopping = async (template: ShoppingTemplate) => {
+    if (addingTemplateId) return;
+    if (!template.items.length) {
+      showStatus('הרשימה ריקה', true);
+      return;
+    }
+    setAddingTemplateId(template.id);
+    showStatus('מעבד...', false);
+    const normalize = (n: string) => (n || '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
+    const names = template.items.map(i => i.item_name.trim()).filter(Boolean);
+
+    // Ask the parser to suggest categories for the whole template in one call.
+    const guesses: Record<string, string> = {};
+    try {
+      const res = await fetch('/api/parse', {
+        method: 'POST',
+        body: JSON.stringify({ text: names.join(', '), categories }),
+      });
+      const data = await res.json();
+      for (const it of ((data && data.items) || []) as any[]) {
+        const itemName = (it.name || it.item_name || '').trim();
+        const rawCat: string = (it.category || '').toString();
+        const usable = rawCat && !['uncertain', 'null', 'לא ידוע'].includes(rawCat.toLowerCase()) && !it.needs_classification;
+        if (itemName && usable) guesses[normalize(itemName)] = rawCat;
+      }
+    } catch {
+      // ignore
+    }
+
+    const duplicates: string[] = [];
+    let added = 0;
+    try {
+      for (const itemName of names) {
+        const base = normalize(itemName);
+        if (!base) continue;
+        if (shoppingList.some(s => normalize(s.item_name || '') === base)) {
+          duplicates.push(itemName);
+          continue;
+        }
+        const cat = guesses[base] || 'כללי';
+        if (cat && cat !== 'כללי' && !categories.includes(cat)) {
+          await supabase.from('category_order').insert([{ category_name: cat, sort_order: 99 }]);
+          setCategories(prev => Array.from(new Set([...prev, cat])));
+        }
+        await supabase.from('shopping_list').insert([{
+          item_name: itemName,
+          category: cat,
+          category_auto: true,
+        }]);
+        added++;
+      }
+      if (duplicates.length > 0) {
+        setDuplicateShoppingAlerts(prev => Array.from(new Set([...prev, ...duplicates])));
+      }
+      if (added > 0) showStatus(`✅ נוספו ${added} מ"${template.name}"`, true);
+      else if (duplicates.length > 0) showStatus('⚠️ כל הפריטים כבר ברשימה', true);
+      else showStatus('✅ עודכן', true);
+      fetchData();
+    } catch {
+      showStatus('❌ שגיאה בשמירה', true);
+    } finally {
+      setAddingTemplateId(null);
+    }
+  };
+
+  const createTemplate = async () => {
+    const name = newTemplateName.trim();
+    const items = newTemplateItemsText
+      .split('\n')
+      .map(l => l.trim())
+      .filter(Boolean);
+    if (!name) {
+      showStatus('❌ חסר שם רשימה', true);
+      return;
+    }
+    if (items.length === 0) {
+      showStatus('❌ אין פריטים ברשימה', true);
+      return;
+    }
+    const { data: inserted, error } = await supabase
+      .from('shopping_templates')
+      .insert([{ name, household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72' }])
+      .select()
+      .single();
+    if (error || !inserted) {
+      showStatus('❌ שגיאה ביצירה', true);
+      return;
+    }
+    const itemsToInsert = items.map((item_name, idx) => ({
+      template_id: (inserted as any).id,
+      item_name,
+      sort_order: idx + 1,
+    }));
+    await supabase.from('shopping_template_items').insert(itemsToInsert);
+    setNewTemplateName('');
+    setNewTemplateItemsText('');
+    setShowCreateTemplate(false);
+    showStatus(`✅ נוצרה הרשימה "${name}"`, true);
+    fetchData();
+  };
+
+  const deleteTemplate = async (template: ShoppingTemplate) => {
+    if (!confirm(`למחוק את הרשימה "${template.name}" לצמיתות?`)) return;
+    await supabase.from('shopping_templates').delete().eq('id', template.id);
+    showStatus(`🗑️ הרשימה "${template.name}" נמחקה`, true);
+    fetchData();
+  };
+
   const openCategorize = () => {
     setCategorizeAssignments({});
     setCategorizeNewCats({});
@@ -782,7 +911,7 @@ export default function HomePage() {
   const activeTasks = tasks.filter(t => t.status !== 'סיימתי');
   const completedTasks = tasks.filter(t => t.status === 'סיימתי');
 
-  const headerGradient = activeView === 'HOME' ? 'from-violet-600 via-fuchsia-600 to-orange-500' : activeView === 'INVENTORY' ? 'from-teal-600 to-emerald-500' : activeView === 'SHOPPING' ? 'from-rose-500 to-orange-500' : activeView === 'EQUIPMENT' ? 'from-sky-600 to-cyan-500' : 'from-indigo-600 to-purple-700';
+  const headerGradient = activeView === 'HOME' ? 'from-violet-600 via-fuchsia-600 to-orange-500' : activeView === 'INVENTORY' ? 'from-teal-600 to-emerald-500' : activeView === 'SHOPPING' ? 'from-rose-500 to-orange-500' : activeView === 'EQUIPMENT' ? 'from-sky-600 to-cyan-500' : activeView === 'TEMPLATES' ? 'from-amber-500 to-orange-500' : 'from-indigo-600 to-purple-700';
 
   const currentEquipItems = equipmentItems.filter(i => i.list_type === equipListType);
   const unpackedEquip = currentEquipItems.filter(i => !i.is_packed);
@@ -854,6 +983,7 @@ export default function HomePage() {
                   <div className="absolute left-0 top-12 w-48 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col text-slate-800 z-[1001] animate-in fade-in slide-in-from-top-2">
                     <button className="p-4 text-right font-black hover:bg-teal-50 border-b flex justify-between" onClick={() => changeView('INVENTORY')}><span>מלאי</span><span>📦</span></button>
                     <button className="p-4 text-right font-black hover:bg-rose-50 border-b flex justify-between" onClick={() => changeView('SHOPPING')}><span>קניות</span><span>🛒</span></button>
+                    <button className="p-4 text-right font-black hover:bg-amber-50 border-b flex justify-between" onClick={() => changeView('TEMPLATES')}><span>הוספת רשימה יעודית</span><span>📝</span></button>
                     <button className="p-4 text-right font-black hover:bg-purple-50 flex justify-between" onClick={() => changeView('TASKS')}><span>משימות</span><span>📌</span></button>
                   </div>
                 )}
@@ -1547,6 +1677,125 @@ export default function HomePage() {
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeView === 'TEMPLATES' && (
+          <div className="space-y-4">
+            <div className="bg-amber-50 border-2 border-amber-200 p-4 rounded-2xl">
+              <p className="text-sm font-bold text-amber-900">
+                לחיצה על רשימה תוסיף את כל הפריטים שבה לרשימת הקניות. אפשר לערוך, ליצור חדשות, או למחוק.
+              </p>
+            </div>
+
+            {!showCreateTemplate && (
+              <button
+                type="button"
+                onClick={() => { setShowCreateTemplate(true); setNewTemplateName(''); setNewTemplateItemsText(''); }}
+                className="w-full bg-amber-500 hover:bg-amber-600 text-white p-4 rounded-2xl font-black shadow-md active:scale-95 transition-all pointer-events-auto"
+              >
+                + צור רשימה חדשה
+              </button>
+            )}
+
+            {showCreateTemplate && (
+              <div className="bg-white p-5 rounded-[2rem] shadow-xl border border-amber-100 space-y-3">
+                <h3 className="font-black text-lg text-amber-900">רשימה חדשה</h3>
+                <input
+                  type="text"
+                  value={newTemplateName}
+                  onChange={(e) => setNewTemplateName(e.target.value)}
+                  placeholder="שם הרשימה (למשל: ארוחת שישי)"
+                  className="w-full p-3 bg-slate-50 rounded-xl font-bold text-sm border-none outline-none focus:ring-2 focus:ring-amber-300 pointer-events-auto"
+                />
+                <textarea
+                  value={newTemplateItemsText}
+                  onChange={(e) => setNewTemplateItemsText(e.target.value)}
+                  placeholder={"פריט אחד בכל שורה. למשל:\n🍅 עגבניות\n🥒 מלפפון\n🧀 גבינה"}
+                  className="w-full p-3 bg-slate-50 rounded-xl text-sm min-h-[160px] border-none outline-none focus:ring-2 focus:ring-amber-300 pointer-events-auto"
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={createTemplate}
+                    className="flex-1 bg-amber-600 text-white p-3 rounded-xl font-black text-sm hover:bg-amber-700 pointer-events-auto"
+                  >
+                    💾 שמור רשימה
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowCreateTemplate(false); setNewTemplateName(''); setNewTemplateItemsText(''); }}
+                    className="bg-slate-200 text-slate-600 px-4 py-3 rounded-xl font-bold text-sm hover:bg-slate-300 pointer-events-auto"
+                  >
+                    ביטול
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {status && (
+              <div className="flex justify-center">
+                <span className={`px-4 py-2 rounded-full text-xs font-bold shadow-sm ${status.includes('❌') ? 'bg-red-100 text-red-600' : status.includes('⚠️') ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700'}`}>{status}</span>
+              </div>
+            )}
+
+            {shoppingTemplates.length === 0 ? (
+              <div className="bg-white p-8 rounded-2xl text-center text-slate-400">
+                <span className="text-4xl block mb-3">📝</span>
+                <p className="font-bold text-sm">אין עדיין רשימות. צור רשימה ראשונה למעלה.</p>
+              </div>
+            ) : (
+              <div className="grid gap-3">
+                {shoppingTemplates.map(tpl => {
+                  const isExpanded = expandedTemplateId === tpl.id;
+                  const isAdding = addingTemplateId === tpl.id;
+                  return (
+                    <div key={tpl.id} className="bg-white rounded-[2rem] shadow-md border border-amber-50 overflow-hidden">
+                      <div className="p-4 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedTemplateId(isExpanded ? null : tpl.id)}
+                          className="flex-1 text-right pointer-events-auto"
+                        >
+                          <h3 className="font-black text-lg text-slate-800">{tpl.name}</h3>
+                          <p className="text-[11px] font-bold text-slate-400 mt-0.5">
+                            {tpl.items.length} פריטים {isExpanded ? '— לחיצה לסגירה' : '— לחיצה לתצוגה'}
+                          </p>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isAdding}
+                          onClick={() => addTemplateToShopping(tpl)}
+                          className="bg-rose-600 hover:bg-rose-700 text-white px-4 py-3 rounded-xl font-black text-sm shadow-md pointer-events-auto disabled:bg-rose-300 disabled:cursor-not-allowed"
+                          title="הוסף את כל הפריטים לקניות"
+                        >
+                          {isAdding ? '...' : '🛒 הוסף'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteTemplate(tpl)}
+                          className="bg-slate-100 text-slate-400 hover:bg-red-100 hover:text-red-600 w-9 h-9 rounded-xl font-black text-xs pointer-events-auto"
+                          title="מחק רשימה"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                      {isExpanded && tpl.items.length > 0 && (
+                        <div className="px-4 pb-4 pt-2 border-t border-amber-100 bg-amber-50/30">
+                          <ul className="space-y-1">
+                            {tpl.items.map(it => (
+                              <li key={it.id} className="text-sm font-bold text-slate-700">
+                                <span className="text-amber-500 mr-1">•</span> {it.item_name}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
