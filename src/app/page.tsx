@@ -54,6 +54,7 @@ export default function HomePage() {
   const [categorizeAssignments, setCategorizeAssignments] = useState<Record<string, string>>({});
   const [categorizeNewCats, setCategorizeNewCats] = useState<Record<string, string>>({});
   const [shoppingTemplates, setShoppingTemplates] = useState<ShoppingTemplate[]>([]);
+  const [addedSummary, setAddedSummary] = useState<{ name: string; category: string }[]>([]);
   const [showCreateTemplate, setShowCreateTemplate] = useState(false);
   const [newTemplateName, setNewTemplateName] = useState('');
   const [newTemplateItemsText, setNewTemplateItemsText] = useState('');
@@ -119,7 +120,7 @@ export default function HomePage() {
   const handleRefresh = () => window.location.reload();
 
   const changeView = (view: typeof activeView) => {
-    setActiveView(view); setIsMenuOpen(false); setIsSearchOpen(false); setSearchTerm('');
+    setActiveView(view); setIsMenuOpen(false); setIsSearchOpen(false); setSearchTerm(''); setAddedSummary([]);
   };
 
   const updateExactQuantity = async (item: Item, newQty: number) => {
@@ -411,6 +412,31 @@ export default function HomePage() {
     setQuickAddRows(prev => prev.map((r, i) => i === idx ? { ...r, ...patch } : r));
   };
 
+  // Ask the parser to suggest a category per item name. Returns a map keyed by
+  // normalized name. Unusable suggestions (uncertain/null) are omitted.
+  const guessCategories = async (names: string[]): Promise<Record<string, string>> => {
+    const normalize = (n: string) => (n || '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
+    const guesses: Record<string, string> = {};
+    const clean = names.map(n => (n || '').trim()).filter(Boolean);
+    if (clean.length === 0) return guesses;
+    try {
+      const res = await fetch('/api/parse', {
+        method: 'POST',
+        body: JSON.stringify({ text: clean.join(', '), categories }),
+      });
+      const data = await res.json();
+      for (const it of ((data && data.items) || []) as any[]) {
+        const itemName = (it.name || it.item_name || '').trim();
+        const rawCat: string = (it.category || '').toString();
+        const usable = rawCat && !['uncertain', 'null', 'לא ידוע'].includes(rawCat.toLowerCase()) && !it.needs_classification;
+        if (itemName && usable) guesses[normalize(itemName)] = rawCat;
+      }
+    } catch {
+      // network error → caller falls back to 'כללי'
+    }
+    return guesses;
+  };
+
   const handleQuickAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (quickAddSubmitting) return;
@@ -419,18 +445,27 @@ export default function HomePage() {
     setQuickAddSubmitting(true);
     showStatus('מעבד...', false);
     const normalize = (n: string) => (n || '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
+
+    // Items where the user did not pick a category get auto-classified.
+    const userPicked = (r: { category: string; newCategory: string }) =>
+      (r.category === '__other__' ? r.newCategory.trim() : r.category);
+    const needGuess = rows.filter(r => !userPicked(r)).map(r => r.name.trim());
+    const guesses = needGuess.length ? await guessCategories(needGuess) : {};
+
     const duplicates: string[] = [];
     const queued = new Set<string>();
+    const summary: { name: string; category: string }[] = [];
     let added = 0;
     try {
       for (const row of rows) {
         const name = row.name.trim();
-        let cat = 'כללי';
+        let cat: string;
         if (row.category === '__other__') {
-          const custom = row.newCategory.trim();
-          if (custom) cat = custom;
+          cat = row.newCategory.trim() || guesses[normalize(name)] || 'כללי';
         } else if (row.category) {
           cat = row.category;
+        } else {
+          cat = guesses[normalize(name)] || 'כללי';
         }
         const base = normalize(name);
         if (!base || queued.has(base)) continue;
@@ -444,11 +479,13 @@ export default function HomePage() {
           setCategories(prev => Array.from(new Set([...prev, cat])));
         }
         await supabase.from('shopping_list').insert([{ item_name: name, category: cat }]);
+        summary.push({ name, category: cat });
         added++;
       }
       if (duplicates.length > 0) {
         setDuplicateShoppingAlerts(prev => Array.from(new Set([...prev, ...duplicates])));
       }
+      setAddedSummary(summary);
       if (added > 0) showStatus(`✅ נוספו ${added}`, true);
       else if (duplicates.length > 0) showStatus('⚠️ כבר ברשימה', true);
       else showStatus('✅ עודכן', true);
@@ -473,24 +510,10 @@ export default function HomePage() {
     const names = template.items.map(i => i.item_name.trim()).filter(Boolean);
 
     // Ask the parser to suggest categories for the whole template in one call.
-    const guesses: Record<string, string> = {};
-    try {
-      const res = await fetch('/api/parse', {
-        method: 'POST',
-        body: JSON.stringify({ text: names.join(', '), categories }),
-      });
-      const data = await res.json();
-      for (const it of ((data && data.items) || []) as any[]) {
-        const itemName = (it.name || it.item_name || '').trim();
-        const rawCat: string = (it.category || '').toString();
-        const usable = rawCat && !['uncertain', 'null', 'לא ידוע'].includes(rawCat.toLowerCase()) && !it.needs_classification;
-        if (itemName && usable) guesses[normalize(itemName)] = rawCat;
-      }
-    } catch {
-      // ignore
-    }
+    const guesses = await guessCategories(names);
 
     const duplicates: string[] = [];
+    const summary: { name: string; category: string }[] = [];
     let added = 0;
     try {
       for (const itemName of names) {
@@ -510,11 +533,13 @@ export default function HomePage() {
           category: cat,
           category_auto: true,
         }]);
+        summary.push({ name: itemName, category: cat });
         added++;
       }
       if (duplicates.length > 0) {
         setDuplicateShoppingAlerts(prev => Array.from(new Set([...prev, ...duplicates])));
       }
+      setAddedSummary(summary);
       if (added > 0) showStatus(`✅ נוספו ${added} מ"${template.name}"`, true);
       else if (duplicates.length > 0) showStatus('⚠️ כל הפריטים כבר ברשימה', true);
       else showStatus('✅ עודכן', true);
@@ -619,6 +644,7 @@ export default function HomePage() {
       }
       const duplicates: string[] = [];
       const queuedBase = new Set<string>();
+      const summary: { name: string; category: string }[] = [];
       let addedCount = 0;
       for (const name of names) {
         const baseName = normalize(name);
@@ -629,11 +655,13 @@ export default function HomePage() {
         }
         queuedBase.add(baseName);
         await supabase.from('shopping_list').insert([{ item_name: name, category }]);
+        summary.push({ name, category });
         addedCount++;
       }
       if (duplicates.length > 0) {
         setDuplicateShoppingAlerts(prev => Array.from(new Set([...prev, ...duplicates])));
       }
+      setAddedSummary(summary);
       if (addedCount > 0) {
         showStatus(`✅ נוספו ${addedCount} ל"${category}"`, true);
       } else if (duplicates.length > 0) {
@@ -1142,7 +1170,8 @@ export default function HomePage() {
                         onChange={(e) => updateQuickAddRow(i, { category: e.target.value, newCategory: e.target.value === '__other__' ? row.newCategory : '' })}
                         className="p-3 bg-slate-50 rounded-xl text-sm font-bold border-none outline-none focus:ring-2 focus:ring-rose-300 pointer-events-auto min-w-[110px]"
                       >
-                        <option value="">כללי</option>
+                        <option value="">🤖 סיווג אוטומטי</option>
+                        <option value="כללי">כללי</option>
                         {dropdownCats.map(c => <option key={c} value={c}>{c}</option>)}
                         <option value="__other__">+ אחר…</option>
                       </select>
@@ -1289,6 +1318,30 @@ export default function HomePage() {
                 </button>
               </div>
             ))}
+          </div>
+        )}
+
+        {addedSummary.length > 0 && (activeView === 'SHOPPING' || activeView === 'TEMPLATES') && (
+          <div className="mb-6 bg-emerald-50 border-2 border-emerald-200 p-4 rounded-2xl">
+            <div className="flex justify-between items-center mb-3">
+              <span className="font-black text-emerald-800 text-sm">✅ נוסף לקניות</span>
+              <button
+                onClick={() => setAddedSummary([])}
+                className="bg-white text-slate-500 hover:bg-slate-100 w-7 h-7 rounded-full font-black text-xs pointer-events-auto transition-colors"
+                title="סגור"
+              >
+                ✕
+              </button>
+            </div>
+            <ul className="space-y-1.5">
+              {addedSummary.map((a, i) => (
+                <li key={`added-${i}`} className="flex items-center gap-2 flex-wrap text-sm">
+                  <span className="font-bold text-emerald-900">{a.name}</span>
+                  <span className="text-emerald-400">←</span>
+                  <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full text-[11px] font-black">📁 {a.category}</span>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 
