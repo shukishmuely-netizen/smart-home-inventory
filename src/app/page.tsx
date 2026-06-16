@@ -486,7 +486,9 @@ export default function HomePage() {
         setDuplicateShoppingAlerts(prev => Array.from(new Set([...prev, ...duplicates])));
       }
       setAddedSummary(summary);
-      if (added > 0) showStatus(`✅ נוספו ${added}`, true);
+      // Single notification: the green summary panel itself states the
+      // category per item, so no separate "added" status pill.
+      if (added > 0) showStatus('');
       else if (duplicates.length > 0) showStatus('⚠️ כבר ברשימה', true);
       else showStatus('✅ עודכן', true);
       setQuickAddRows([emptyQuickAddRow(), emptyQuickAddRow(), emptyQuickAddRow()]);
@@ -540,7 +542,8 @@ export default function HomePage() {
         setDuplicateShoppingAlerts(prev => Array.from(new Set([...prev, ...duplicates])));
       }
       setAddedSummary(summary);
-      if (added > 0) showStatus(`✅ נוספו ${added} מ"${template.name}"`, true);
+      // Single notification: the green summary panel states the category.
+      if (added > 0) showStatus('');
       else if (duplicates.length > 0) showStatus('⚠️ כל הפריטים כבר ברשימה', true);
       else showStatus('✅ עודכן', true);
       fetchData();
@@ -662,8 +665,9 @@ export default function HomePage() {
         setDuplicateShoppingAlerts(prev => Array.from(new Set([...prev, ...duplicates])));
       }
       setAddedSummary(summary);
+      // Single notification: the green summary panel states the category.
       if (addedCount > 0) {
-        showStatus(`✅ נוספו ${addedCount} ל"${category}"`, true);
+        showStatus('');
       } else if (duplicates.length > 0) {
         showStatus('⚠️ כבר ברשימה', true);
       } else {
