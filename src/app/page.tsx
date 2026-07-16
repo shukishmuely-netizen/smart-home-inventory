@@ -11,6 +11,47 @@ type ShoppingTemplate = { id: string; name: string; items: { id: string; item_na
 type DisambiguationTask = { originalName: string; matches: Item[]; quantityToSubtract: number; removeAll: boolean; };
 type WordChoiceTask = { originalName: string; options: string[]; item: any };
 
+// Curated common Israeli-supermarket products (no emoji, plain names) used as a
+// baseline for autocomplete, merged at runtime with the household's own history.
+const SUPERMARKET_ITEMS: string[] = [
+  // חלב וביצים
+  'חלב', 'חלב סויה', 'חלב שקדים', 'חלב שיבולת שועל', 'שמנת מתוקה', 'שמנת חמוצה', 'גבינה לבנה', 'גבינה צהובה',
+  'קוטג׳', 'גבינת שמנת', 'גבינה בולגרית', 'גבינת פטה', 'מוצרלה', 'פרמזן', 'לבנה', 'יוגורט', 'יוגורט יווני',
+  'גיל', 'מעדן', 'חמאה', 'מרגרינה', 'ביצים', 'ביצים חופש',
+  // ירקות
+  'עגבניות', 'מלפפון', 'בצל', 'בצל סגול', 'שום', 'גזר', 'תפוח אדמה', 'בטטה', 'פלפל', 'גמבה', 'חציל',
+  'קישוא', 'קישוא צהוב', 'כרוב', 'כרובית', 'ברוקולי', 'חסה', 'חסה אייסברג', 'תרד', 'פטרוזיליה', 'כוסברה',
+  'שמיר', 'נענע', 'בזיליקום', 'סלרי', 'לימון', 'זנגביל', 'צנון', 'סלק', 'דלעת', 'תירס', 'שעועית ירוקה',
+  'אפונה', 'פטריות', 'אבוקדו', 'עגבניות שרי', 'בצל ירוק',
+  // פירות
+  'תפוח', 'בננה', 'תפוז', 'קלמנטינה', 'אגס', 'ענבים', 'אבטיח', 'מלון', 'תות', 'אפרסק', 'נקטרינה', 'שזיף',
+  'משמש', 'מנגו', 'אננס', 'קיווי', 'רימון', 'תמר', 'ליצ׳י', 'אשכולית', 'פומלה',
+  // בשר ודגים
+  'עוף', 'חזה עוף', 'שוקיים', 'כנפיים', 'טחון', 'בשר טחון', 'אנטריקוט', 'שניצל', 'נקניקיות', 'קבב',
+  'סלמון', 'טונה', 'דג', 'פילה דג', 'הודו', 'שווארמה',
+  // מאפים ולחם
+  'לחם', 'לחם אחיד', 'לחמניות', 'פיתות', 'לחם מחמצת', 'בגט', 'חלה', 'טורטיה', 'קרואסון', 'עוגיות',
+  'ביסקוויטים', 'קרקרים', 'מצות',
+  // יבשים ופנטרי
+  'אורז', 'פסטה', 'ספגטי', 'קוסקוס', 'בורגול', 'קינואה', 'עדשים', 'חומוס יבש', 'שעועית יבשה', 'קמח',
+  'קמח מלא', 'סוכר', 'סוכר חום', 'מלח', 'פלפל שחור', 'פפריקה', 'כמון', 'קורנפלור', 'אבקת אפייה', 'שמרים',
+  'שמן', 'שמן זית', 'שמן קנולה', 'חומץ', 'רוטב סויה', 'קטשופ', 'מיונז', 'חרדל', 'טחינה', 'ריבה', 'דבש',
+  'ממרח שוקולד', 'חמאת בוטנים', 'רסק עגבניות', 'תירס משומר', 'טונה בקופסה', 'זיתים', 'מלפפון חמוץ',
+  'קורנפלקס', 'גרנולה', 'שיבולת שועל', 'אגוזים', 'שקדים', 'צימוקים', 'קפה', 'קפה נמס', 'תה', 'קקאו',
+  // משקאות
+  'מים', 'מים מינרלים', 'סודה', 'קולה', 'ספרייט', 'מיץ', 'מיץ תפוזים', 'מיץ ענבים', 'לימונדה', 'בירה', 'יין',
+  // קפואים
+  'גלידה', 'ירקות קפואים', 'אפונה קפואה', 'פיצה קפואה', 'מלאווח', 'בורקס', 'קרח',
+  // חטיפים וממתקים
+  'שוקולד', 'חטיף', 'במבה', 'ביסלי', 'צ׳יפס', 'תפוצ׳יפס', 'פופקורן', 'מסטיק', 'סוכריות', 'ופל',
+  // תינוקות
+  'מטרנה', 'חיתולים', 'מגבונים', 'מחית לתינוק', 'דייסת תינוק',
+  // ניקיון וטואלטיקה
+  'נייר טואלט', 'מגבות נייר', 'סבון כלים', 'אבקת כביסה', 'מרכך כביסה', 'מטהר', 'אקונומיקה', 'ספריי ניקוי',
+  'שקיות זבל', 'נייר אפייה', 'ניילון נצמד', 'שמפו', 'מרכך שיער', 'סבון גוף', 'משחת שיניים', 'מברשת שיניים',
+  'דאודורנט', 'קרם גוף', 'תחבושות', 'טמפונים', 'גילוח',
+];
+
 export default function HomePage() {
   const today = new Date().toISOString().split('T')[0];
   const [activeView, setActiveView] = useState<'HOME' | 'INVENTORY' | 'SHOPPING' | 'TASKS' | 'EQUIPMENT' | 'TEMPLATES'>('HOME');
@@ -47,9 +88,13 @@ export default function HomePage() {
   const [categoryAddLoading, setCategoryAddLoading] = useState(false);
   const emptyQuickAddRow = () => ({ name: '', category: '', newCategory: '' });
   const [quickAddRows, setQuickAddRows] = useState<{ name: string; category: string; newCategory: string }[]>(
-    [emptyQuickAddRow(), emptyQuickAddRow(), emptyQuickAddRow()]
+    [emptyQuickAddRow(), emptyQuickAddRow()]
   );
   const [quickAddSubmitting, setQuickAddSubmitting] = useState(false);
+  const [suggestRow, setSuggestRow] = useState<number | null>(null);
+  const [catGuessingRow, setCatGuessingRow] = useState<number | null>(null);
+  const [editingCategoryName, setEditingCategoryName] = useState<string | null>(null);
+  const [categoryNameValue, setCategoryNameValue] = useState('');
   const [showCategorize, setShowCategorize] = useState(false);
   const [categorizeAssignments, setCategorizeAssignments] = useState<Record<string, string>>({});
   const [categorizeNewCats, setCategorizeNewCats] = useState<Record<string, string>>({});
@@ -409,7 +454,59 @@ export default function HomePage() {
   };
 
   const updateQuickAddRow = (idx: number, patch: Partial<{ name: string; category: string; newCategory: string }>) => {
-    setQuickAddRows(prev => prev.map((r, i) => i === idx ? { ...r, ...patch } : r));
+    setQuickAddRows(prev => {
+      const next = prev.map((r, i) => i === idx ? { ...r, ...patch } : r);
+      // Auto-grow: typing into the last row appends a fresh empty row.
+      if (idx === prev.length - 1 && next[idx].name.trim() && next.length < 20) {
+        next.push(emptyQuickAddRow());
+      }
+      return next;
+    });
+  };
+
+  // On entering an item, auto-pick a category (editable) if the user hasn't chosen one.
+  const autoFillRowCategory = async (idx: number, rawName: string) => {
+    const name = (rawName || '').trim();
+    if (!name) return;
+    const current = quickAddRows[idx];
+    if (!current || current.category) return; // user already chose one
+    setCatGuessingRow(idx);
+    try {
+      const guesses = await guessCategories([name]);
+      const normalize = (n: string) => (n || '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
+      const guess = guesses[normalize(name)];
+      if (guess) {
+        setCategories(prev => prev.includes(guess) ? prev : [...prev, guess]);
+        setQuickAddRows(prev => prev.map((r, i) => (i === idx && !r.category) ? { ...r, category: guess } : r));
+      }
+    } finally {
+      setCatGuessingRow(null);
+    }
+  };
+
+  const startRenameCategory = (cat: string) => {
+    setEditingCategoryName(cat);
+    setCategoryNameValue(cat);
+  };
+
+  const saveRenameCategory = async (oldCat: string) => {
+    const newCat = categoryNameValue.trim();
+    setEditingCategoryName(null);
+    if (!newCat || newCat === oldCat) return;
+    await supabase.from('shopping_list').update({ category: newCat }).eq('category', oldCat);
+    await supabase.from('category_order').update({ category_name: newCat }).eq('category_name', oldCat);
+    setCategories(prev => Array.from(new Set(prev.map(c => c === oldCat ? newCat : c))));
+    fetchData();
+    showStatus(`✏️ הקטגוריה שונתה ל"${newCat}"`, true);
+  };
+
+  const deleteCategory = async (cat: string) => {
+    if (!confirm(`למחוק את הקטגוריה "${cat}"? הפריטים שבה יעברו ל"כללי" (לא יימחקו).`)) return;
+    await supabase.from('shopping_list').update({ category: 'כללי' }).eq('category', cat);
+    await supabase.from('category_order').delete().eq('category_name', cat);
+    setCategories(prev => prev.filter(c => c !== cat));
+    fetchData();
+    showStatus(`🗑️ הקטגוריה "${cat}" נמחקה`, true);
   };
 
   // Ask the parser to suggest a category per item name. Returns a map keyed by
@@ -491,7 +588,7 @@ export default function HomePage() {
       if (added > 0) showStatus('');
       else if (duplicates.length > 0) showStatus('⚠️ כבר ברשימה', true);
       else showStatus('✅ עודכן', true);
-      setQuickAddRows([emptyQuickAddRow(), emptyQuickAddRow(), emptyQuickAddRow()]);
+      setQuickAddRows([emptyQuickAddRow(), emptyQuickAddRow()]);
       fetchData();
     } catch {
       showStatus('❌ שגיאה בשמירה', true);
@@ -935,10 +1032,32 @@ export default function HomePage() {
     .sort((a, b) => (a.item_name || '').localeCompare(b.item_name || '', 'he'));
 
   const displayCategories = Array.from(new Set([
-    ...categories, 
-    ...safeInventory.map(i => i.category || 'כללי'), 
+    ...categories,
+    ...safeInventory.map(i => i.category || 'כללי'),
     ...safeShoppingList.map(s => s.category || 'כללי')
   ])).filter(c => c !== 'uncertain' && c !== 'null');
+
+  // Autocomplete pool: household history (shopping, inventory, templates) first,
+  // then the general supermarket catalog. Names are stripped of leading emoji and
+  // trailing "(N)" quantity so matching is clean.
+  const stripName = (n: string) => (n || '')
+    .replace(/^[^A-Za-z0-9֐-׿]+/, '')
+    .replace(/\s*\(\d+\)\s*$/, '')
+    .trim();
+  const suggestionPool: string[] = (() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    const push = (raw: string) => {
+      const clean = stripName(raw);
+      const key = clean.toLowerCase();
+      if (clean && !seen.has(key)) { seen.add(key); out.push(clean); }
+    };
+    safeShoppingList.forEach(s => push(s.item_name || ''));
+    safeInventory.forEach(i => push(i.item_name || ''));
+    shoppingTemplates.forEach(t => t.items.forEach(it => push(it.item_name || '')));
+    SUPERMARKET_ITEMS.forEach(push);
+    return out;
+  })();
 
   const activeTasks = tasks.filter(t => t.status !== 'סיימתי');
   const completedTasks = tasks.filter(t => t.status === 'סיימתי');
@@ -1015,7 +1134,7 @@ export default function HomePage() {
                   <div className="absolute left-0 top-12 w-48 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col text-slate-800 z-[1001] animate-in fade-in slide-in-from-top-2">
                     <button className="p-4 text-right font-black hover:bg-teal-50 border-b flex justify-between" onClick={() => changeView('INVENTORY')}><span>מלאי</span><span>📦</span></button>
                     <button className="p-4 text-right font-black hover:bg-rose-50 border-b flex justify-between" onClick={() => changeView('SHOPPING')}><span>קניות</span><span>🛒</span></button>
-                    <button className="p-4 text-right font-black hover:bg-amber-50 border-b flex justify-between" onClick={() => changeView('TEMPLATES')}><span>הוספת רשימה יעודית</span><span>📝</span></button>
+                    <button className="p-4 text-right font-black hover:bg-amber-50 border-b flex justify-between" onClick={() => changeView('TEMPLATES')}><span>רשימות</span><span>📝</span></button>
                     <button className="p-4 text-right font-black hover:bg-purple-50 flex justify-between" onClick={() => changeView('TASKS')}><span>משימות</span><span>📌</span></button>
                   </div>
                 )}
@@ -1159,22 +1278,53 @@ export default function HomePage() {
             <form onSubmit={handleQuickAddSubmit} className="space-y-3">
               {quickAddRows.map((row, i) => {
                 const dropdownCats = displayCategories.filter(c => c && c !== 'uncertain' && c !== 'null' && c !== 'כללי');
+                const q = stripName(row.name).toLowerCase();
+                const matches = (suggestRow === i && q.length >= 1)
+                  ? suggestionPool.filter(s => {
+                      const sl = s.toLowerCase();
+                      return sl.includes(q) && sl !== q;
+                    }).slice(0, 7)
+                  : [];
                 return (
                   <div key={`qa-${i}`} className="space-y-2">
                     <div className="flex gap-2 items-stretch">
-                      <input
-                        type="text"
-                        value={row.name}
-                        onChange={(e) => updateQuickAddRow(i, { name: e.target.value })}
-                        placeholder={i === 0 ? 'פריט לקנייה...' : 'פריט נוסף (אופציונלי)'}
-                        className="flex-1 p-3 bg-slate-50 rounded-xl text-sm font-bold border-none outline-none focus:ring-2 focus:ring-rose-300 pointer-events-auto"
-                      />
+                      <div className="relative flex-1">
+                        <input
+                          type="text"
+                          value={row.name}
+                          onChange={(e) => updateQuickAddRow(i, { name: e.target.value })}
+                          onFocus={() => setSuggestRow(i)}
+                          onBlur={() => { window.setTimeout(() => setSuggestRow(prev => prev === i ? null : prev), 150); autoFillRowCategory(i, row.name); }}
+                          placeholder={i === 0 ? 'פריט לקנייה...' : 'פריט נוסף (אופציונלי)'}
+                          className="w-full p-3 bg-slate-50 rounded-xl text-sm font-bold border-none outline-none focus:ring-2 focus:ring-rose-300 pointer-events-auto"
+                          autoComplete="off"
+                        />
+                        {matches.length > 0 && (
+                          <div className="absolute z-30 top-full mt-1 inset-x-0 bg-white rounded-xl shadow-2xl border border-slate-100 overflow-hidden max-h-60 overflow-y-auto">
+                            {matches.map(m => (
+                              <button
+                                key={m}
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  updateQuickAddRow(i, { name: m });
+                                  setSuggestRow(null);
+                                  autoFillRowCategory(i, m);
+                                }}
+                                className="w-full text-right px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-rose-50 hover:text-rose-700 border-b border-slate-50 last:border-0 pointer-events-auto transition-colors"
+                              >
+                                {m}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                       <select
                         value={row.category}
                         onChange={(e) => updateQuickAddRow(i, { category: e.target.value, newCategory: e.target.value === '__other__' ? row.newCategory : '' })}
                         className="p-3 bg-slate-50 rounded-xl text-sm font-bold border-none outline-none focus:ring-2 focus:ring-rose-300 pointer-events-auto min-w-[110px]"
                       >
-                        <option value="">🤖 סיווג אוטומטי</option>
+                        <option value="">{catGuessingRow === i ? '🤖 מסווג…' : '🤖 סיווג אוטומטי'}</option>
                         <option value="כללי">כללי</option>
                         {dropdownCats.map(c => <option key={c} value={c}>{c}</option>)}
                         <option value="__other__">+ אחר…</option>
@@ -1421,17 +1571,41 @@ export default function HomePage() {
                   return (
                     <div key={`shop-cat-${cat}`} className="space-y-3">
                       <div className="flex items-center justify-between gap-2 pr-2">
-                        <h3 className="font-black text-rose-700 text-sm uppercase border-r-4 border-rose-400 pr-2 flex-1">{cat}</h3>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCategoryAddOpen(prev => prev === cat ? null : cat);
-                            setCategoryAddInput('');
-                          }}
-                          className="text-[11px] font-black bg-rose-100 text-rose-700 hover:bg-rose-200 px-3 py-1.5 rounded-xl pointer-events-auto transition-colors"
-                        >
-                          {isAddOpen ? '✕ סגור' : '+ הוסף'}
-                        </button>
+                        {editingCategoryName === cat ? (
+                          <div className="flex items-center gap-2 flex-1">
+                            <input
+                              autoFocus
+                              value={categoryNameValue}
+                              onChange={(e) => setCategoryNameValue(e.target.value)}
+                              onKeyDown={(e) => { if (e.key === 'Enter') saveRenameCategory(cat); if (e.key === 'Escape') setEditingCategoryName(null); }}
+                              className="flex-1 border-b-2 border-rose-500 bg-rose-50 px-2 py-1 outline-none font-black text-sm pointer-events-auto"
+                            />
+                            <button type="button" onClick={() => saveRenameCategory(cat)} className="bg-green-100 text-green-700 px-2 py-1 rounded-lg text-xs font-black pointer-events-auto">✅</button>
+                            <button type="button" onClick={() => setEditingCategoryName(null)} className="bg-slate-100 text-slate-400 px-2 py-1 rounded-lg text-xs font-black pointer-events-auto">✕</button>
+                          </div>
+                        ) : (
+                          <h3 className="font-black text-rose-700 text-sm uppercase border-r-4 border-rose-400 pr-2 flex-1">{cat}</h3>
+                        )}
+                        {editingCategoryName !== cat && (
+                          <div className="flex items-center gap-1.5">
+                            {cat !== 'כללי' && (
+                              <>
+                                <button type="button" onClick={() => startRenameCategory(cat)} title="שנה שם קטגוריה" className="text-[11px] font-black bg-slate-100 text-slate-500 hover:bg-slate-200 px-2.5 py-1.5 rounded-xl pointer-events-auto transition-colors">✏️</button>
+                                <button type="button" onClick={() => deleteCategory(cat)} title="מחק קטגוריה" className="text-[11px] font-black bg-slate-100 text-slate-500 hover:bg-red-100 hover:text-red-600 px-2.5 py-1.5 rounded-xl pointer-events-auto transition-colors">🗑️</button>
+                              </>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCategoryAddOpen(prev => prev === cat ? null : cat);
+                                setCategoryAddInput('');
+                              }}
+                              className="text-[11px] font-black bg-rose-100 text-rose-700 hover:bg-rose-200 px-3 py-1.5 rounded-xl pointer-events-auto transition-colors"
+                            >
+                              {isAddOpen ? '✕ סגור' : '+ הוסף'}
+                            </button>
+                          </div>
+                        )}
                       </div>
                       {isAddOpen && (
                         <form onSubmit={(e) => handleCategoryAdd(e, cat)} className="bg-rose-50 border border-rose-200 p-3 rounded-2xl flex flex-wrap gap-2 items-stretch">
