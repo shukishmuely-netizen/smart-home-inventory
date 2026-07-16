@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Heebo, Frank_Ruhl_Libre } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
-const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
+// Lyra design language: Heebo body + Frank Ruhl Libre serif headings.
+const heebo = Heebo({ variable: "--font-heebo", subsets: ["hebrew", "latin"] });
+const frankRuhl = Frank_Ruhl_Libre({ variable: "--font-frank", subsets: ["hebrew", "latin"] });
 
 export const metadata: Metadata = {
   title: "הבית של ניאו",
@@ -24,7 +25,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="he" dir="rtl">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      <body className={`${heebo.variable} ${frankRuhl.variable} antialiased`}>
         {children}
       </body>
     </html>
