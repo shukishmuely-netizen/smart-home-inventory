@@ -90,7 +90,7 @@ export default function HomePage() {
   const [duplicateShoppingAlerts, setDuplicateShoppingAlerts] = useState<string[]>([]);
   const [wordChoiceTasks, setWordChoiceTasks] = useState<WordChoiceTask[]>([]);
   const [equipmentItems, setEquipmentItems] = useState<EquipmentItem[]>([]);
-  const [equipListType, setEquipListType] = useState<'חו"ל' | 'חד"כ' | 'סופ"ש'>('חד"כ');
+  const [equipListType, setEquipListType] = useState<string>('חד"כ');
   const EQUIP_CATEGORIES = ['ניאו', 'חשמל', 'בגדים', 'תרופות', 'נעליים', 'ציוד נוסף'];
 
   const [newTask, setNewTask] = useState<Task>({
@@ -117,6 +117,7 @@ export default function HomePage() {
   const [categorizeAssignments, setCategorizeAssignments] = useState<Record<string, string>>({});
   const [categorizeNewCats, setCategorizeNewCats] = useState<Record<string, string>>({});
   const [shoppingTemplates, setShoppingTemplates] = useState<ShoppingTemplate[]>([]);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
   const [addedSummary, setAddedSummary] = useState<{ name: string; category: string }[]>([]);
   const [showCreateTemplate, setShowCreateTemplate] = useState(false);
   const [newTemplateName, setNewTemplateName] = useState('');
@@ -164,6 +165,12 @@ export default function HomePage() {
     if (catsRes.data) setCategories(catsRes.data.map(c => c.category_name));
     if (tskRes.data) setTasks(tskRes.data);
     if (equipRes.data) setEquipmentItems(equipRes.data);
+    // Surface a failed templates read instead of silently rendering an empty
+    // list — a missing grant or stale API schema cache looks identical to
+    // "no lists yet" otherwise.
+    const tplErr = (tplRes as any).error || (tplItemsRes as any).error;
+    setTemplatesError(tplErr ? (tplErr.message || 'שגיאה בטעינת הרשימות') : null);
+
     if (tplRes.data) {
       const itemsByTemplate: Record<string, { id: string; item_name: string; category?: string | null }[]> = {};
       for (const it of (tplItemsRes.data || []) as any[]) {
@@ -995,7 +1002,7 @@ export default function HomePage() {
   // Auto-reset the active equipment list when entering the view or switching
   // tabs, if a day has passed since it was last marked.
   useEffect(() => {
-    if (activeView !== 'EQUIPMENT') return;
+    if (activeView !== 'TEMPLATES') return;
     let cancelled = false;
     (async () => {
       const { data } = await supabase.from('equipment_sessions').select('*').eq('list_type', equipListType).single();
@@ -1104,6 +1111,12 @@ export default function HomePage() {
 
   const headerGradient = 'from-[var(--c-grad-a)] via-[var(--c-grad-b)] to-[var(--c-grad-c)]';
 
+  // Tab list is driven by the DB, so a new list_type shows up on its own.
+  const DEFAULT_EQUIP_LISTS = ['חו"ל', 'חד"כ', 'סופ"ש'];
+  const equipListTypes = Array.from(new Set([
+    ...DEFAULT_EQUIP_LISTS,
+    ...equipmentItems.map(i => i.list_type).filter(Boolean),
+  ]));
   const currentEquipItems = equipmentItems.filter(i => i.list_type === equipListType);
   const unpackedEquip = currentEquipItems.filter(i => !i.is_packed);
   const packedEquip = currentEquipItems.filter(i => i.is_packed);
@@ -1175,7 +1188,6 @@ export default function HomePage() {
                     <button className="p-4 text-right font-black hover:bg-teal-50 border-b flex justify-between" onClick={() => changeView('INVENTORY')}><span>מלאי</span><span>📦</span></button>
                     <button className="p-4 text-right font-black hover:bg-rose-50 border-b flex justify-between" onClick={() => changeView('SHOPPING')}><span>קניות</span><span>🛒</span></button>
                     <button className="p-4 text-right font-black hover:bg-amber-50 border-b flex justify-between" onClick={() => changeView('TEMPLATES')}><span>רשימות</span><span>📝</span></button>
-                    <button className="p-4 text-right font-black hover:bg-sky-50 border-b flex justify-between" onClick={() => changeView('EQUIPMENT')}><span>רשימת ציוד</span><span>🧳</span></button>
                     <button className="p-4 text-right font-black hover:bg-purple-50 border-b flex justify-between" onClick={() => changeView('TASKS')}><span>משימות</span><span>📌</span></button>
                     <button className="p-4 text-right font-black hover:bg-[var(--c-soft)] flex justify-between" onClick={() => changeView('SETTINGS')}><span>הגדרות</span><span>⚙️</span></button>
                   </div>
@@ -1255,8 +1267,8 @@ export default function HomePage() {
                <div className="text-right"><span className="block text-2xl font-black">📝 משימות</span><span className="text-slate-400 text-sm">{activeTasks.length} פתוחות</span></div>
                <span className="text-4xl">📌</span>
             </button>
-            <button onClick={() => changeView('EQUIPMENT')} className="p-6 bg-white rounded-[2rem] shadow-lg border-b-8 border-[var(--c-acc3)] flex items-center justify-between active:scale-95 transition-all">
-               <div className="text-right"><span className="block text-2xl font-black">🧳 רשימת ציוד</span><span className="text-slate-400 text-sm">{equipmentItems.filter(i => !i.is_packed).length} לא נארזו</span></div>
+            <button onClick={() => changeView('TEMPLATES')} className="p-6 bg-white rounded-[2rem] shadow-lg border-b-8 border-[var(--c-acc3)] flex items-center justify-between active:scale-95 transition-all">
+               <div className="text-right"><span className="block text-2xl font-black">📝 רשימות</span><span className="text-slate-400 text-sm">{equipmentItems.filter(i => !i.is_packed).length} לא נארזו · {shoppingTemplates.length} רשימות קניות</span></div>
                <span className="text-4xl">🎒</span>
             </button>
           </div>
@@ -1862,12 +1874,16 @@ export default function HomePage() {
           </div>
         )}
 
-        {activeView === 'EQUIPMENT' && (
+        {activeView === 'TEMPLATES' && (
           <div className="space-y-6">
-            {/* List type tabs */}
-            <div className="flex gap-1 p-1 bg-white rounded-xl shadow-sm border border-[var(--c-line)]">
-              {(['חו"ל', 'חד"כ', 'סופ"ש'] as const).map(lt => (
-                <button key={lt} onClick={() => setEquipListType(lt)} className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all pointer-events-auto ${equipListType === lt ? 'bg-[var(--c-primary)] text-white shadow-md' : 'text-slate-400 hover:bg-[var(--c-soft)]'}`}>{lt}</button>
+            <h2 className="font-black text-xl text-[var(--c-head)] flex items-center gap-2">
+              🧳 רשימות ציוד
+              <span className="text-[11px] font-bold text-slate-400">מסמנים מה נארז</span>
+            </h2>
+            {/* List type tabs — driven by what actually exists in the DB */}
+            <div className="flex gap-1 p-1 bg-white rounded-xl shadow-sm border border-[var(--c-line)] flex-wrap">
+              {equipListTypes.map(lt => (
+                <button key={lt} onClick={() => setEquipListType(lt)} className={`flex-1 min-w-[80px] py-2.5 rounded-lg text-sm font-bold transition-all pointer-events-auto ${equipListType === lt ? 'bg-[var(--c-primary)] text-white shadow-md' : 'text-slate-400 hover:bg-[var(--c-soft)]'}`}>{lt}</button>
               ))}
             </div>
 
@@ -1956,7 +1972,11 @@ export default function HomePage() {
         )}
 
         {activeView === 'TEMPLATES' && (
-          <div className="space-y-4">
+          <div className="space-y-4 mt-10 pt-8 border-t-2 border-[var(--c-line)]">
+            <h2 className="font-black text-xl text-[var(--c-head)] flex items-center gap-2">
+              🛒 רשימות קניות
+              <span className="text-[11px] font-bold text-slate-400">מוסיפות פריטים לקניות</span>
+            </h2>
             <div className="bg-amber-50 border-2 border-amber-200 p-4 rounded-2xl">
               <p className="text-sm font-bold text-amber-900">
                 לחיצה על רשימה תוסיף את כל הפריטים שבה לרשימת הקניות. אפשר לערוך, ליצור חדשות, או למחוק.
@@ -2014,7 +2034,13 @@ export default function HomePage() {
               </div>
             )}
 
-            {shoppingTemplates.length === 0 ? (
+            {templatesError ? (
+              <div className="bg-red-50 border-2 border-red-200 p-5 rounded-2xl">
+                <p className="font-black text-red-800 text-sm mb-1">⚠️ הרשימות לא נטענו</p>
+                <p className="text-xs font-bold text-red-600 mb-2">אין הרשאת גישה לטבלת הרשימות, או שהשכבה שמגישה את הנתונים עוד לא מכירה אותה.</p>
+                <p className="text-[11px] font-mono text-red-500 break-all" dir="ltr">{templatesError}</p>
+              </div>
+            ) : shoppingTemplates.length === 0 ? (
               <div className="bg-white p-8 rounded-2xl text-center text-slate-400">
                 <span className="text-4xl block mb-3">📝</span>
                 <p className="font-bold text-sm">אין עדיין רשימות. צור רשימה ראשונה למעלה.</p>
