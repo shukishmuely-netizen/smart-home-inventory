@@ -6,14 +6,73 @@ type Item = { id?: string; item_name: string; name?: string; quantity: number; c
 type Task = { id?: string; title: string; description?: string; urgency: string; assignee: string; target_date: string; status: string; depends_on_task_id?: string | null };
 type EditTaskFocus = 'title' | 'urgency' | 'date' | 'assignee' | 'depends' | 'all';
 type EquipmentItem = { id?: string; list_type: string; category: string; item_name: string; is_packed: boolean };
-type ShoppingTemplate = { id: string; name: string; items: { id: string; item_name: string }[] };
+type ShoppingTemplate = { id: string; name: string; items: { id: string; item_name: string; category?: string | null }[] };
+
+const THEME_OPTIONS = [
+  { key: 'pastel', name: 'פסטל', desc: 'לבנדר, ורוד ומנטה — רך ומודרני', bg: '#f9f6ff', primary: '#a78bfa', head: '#5b4b8a' },
+  { key: 'lyra', name: 'ליירה', desc: 'קרם, אלמוג ונייבי עם כותרות סריף', bg: '#fbf6ee', primary: '#e87a4f', head: '#1e2c5f' },
+  { key: 'ocean', name: 'אוקיינוס', desc: 'תכלת, טורקיז וכחול עמוק', bg: '#f0f9ff', primary: '#38bdf8', head: '#0c4a6e' },
+  { key: 'sunset', name: 'סורבה', desc: 'אפרסק, ורוד וצהוב שקיעה', bg: '#fff7ed', primary: '#fb923c', head: '#9a3412' },
+  { key: 'mono', name: 'מינימל', desc: 'שחור-לבן נקי, בלי צבע', bg: '#fafafa', primary: '#18181b', head: '#09090b' },
+];
+
+const FONT_OPTIONS = [
+  { key: 'heebo', name: 'היבו', desc: 'נקי ומודרני', varName: 'var(--font-heebo)' },
+  { key: 'assistant', name: 'אסיסטנט', desc: 'קליל וידידותי', varName: 'var(--font-assistant)' },
+  { key: 'rubik', name: 'רוביק', desc: 'עגלגל ובולט', varName: 'var(--font-rubik)' },
+  { key: 'varela', name: 'ורלה ראונד', desc: 'רך ומעוגל', varName: 'var(--font-varela)' },
+  { key: 'frank', name: 'פרנק רוהל', desc: 'קלאסי עם אופי', varName: 'var(--font-frank)' },
+];
 
 type DisambiguationTask = { originalName: string; matches: Item[]; quantityToSubtract: number; removeAll: boolean; };
 type WordChoiceTask = { originalName: string; options: string[]; item: any };
 
+// Curated common Israeli-supermarket products (no emoji, plain names) used as a
+// baseline for autocomplete, merged at runtime with the household's own history.
+const SUPERMARKET_ITEMS: string[] = [
+  // חלב וביצים
+  'חלב', 'חלב סויה', 'חלב שקדים', 'חלב שיבולת שועל', 'שמנת מתוקה', 'שמנת חמוצה', 'גבינה לבנה', 'גבינה צהובה',
+  'קוטג׳', 'גבינת שמנת', 'גבינה בולגרית', 'גבינת פטה', 'מוצרלה', 'פרמזן', 'לבנה', 'יוגורט', 'יוגורט יווני',
+  'גיל', 'מעדן', 'חמאה', 'מרגרינה', 'ביצים', 'ביצים חופש',
+  // ירקות
+  'עגבניות', 'מלפפון', 'בצל', 'בצל סגול', 'שום', 'גזר', 'תפוח אדמה', 'בטטה', 'פלפל', 'גמבה', 'חציל',
+  'קישוא', 'קישוא צהוב', 'כרוב', 'כרובית', 'ברוקולי', 'חסה', 'חסה אייסברג', 'תרד', 'פטרוזיליה', 'כוסברה',
+  'שמיר', 'נענע', 'בזיליקום', 'סלרי', 'לימון', 'זנגביל', 'צנון', 'סלק', 'דלעת', 'תירס', 'שעועית ירוקה',
+  'אפונה', 'פטריות', 'אבוקדו', 'עגבניות שרי', 'בצל ירוק',
+  // פירות
+  'תפוח', 'בננה', 'תפוז', 'קלמנטינה', 'אגס', 'ענבים', 'אבטיח', 'מלון', 'תות', 'אפרסק', 'נקטרינה', 'שזיף',
+  'משמש', 'מנגו', 'אננס', 'קיווי', 'רימון', 'תמר', 'ליצ׳י', 'אשכולית', 'פומלה',
+  // בשר ודגים
+  'עוף', 'חזה עוף', 'שוקיים', 'כנפיים', 'טחון', 'בשר טחון', 'אנטריקוט', 'שניצל', 'נקניקיות', 'קבב',
+  'סלמון', 'טונה', 'דג', 'פילה דג', 'הודו', 'שווארמה',
+  // מאפים ולחם
+  'לחם', 'לחם אחיד', 'לחמניות', 'פיתות', 'לחם מחמצת', 'בגט', 'חלה', 'טורטיה', 'קרואסון', 'עוגיות',
+  'ביסקוויטים', 'קרקרים', 'מצות',
+  // יבשים ופנטרי
+  'אורז', 'פסטה', 'ספגטי', 'קוסקוס', 'בורגול', 'קינואה', 'עדשים', 'חומוס יבש', 'שעועית יבשה', 'קמח',
+  'קמח מלא', 'סוכר', 'סוכר חום', 'מלח', 'פלפל שחור', 'פפריקה', 'כמון', 'קורנפלור', 'אבקת אפייה', 'שמרים',
+  'שמן', 'שמן זית', 'שמן קנולה', 'חומץ', 'רוטב סויה', 'קטשופ', 'מיונז', 'חרדל', 'טחינה', 'ריבה', 'דבש',
+  'ממרח שוקולד', 'חמאת בוטנים', 'רסק עגבניות', 'תירס משומר', 'טונה בקופסה', 'זיתים', 'מלפפון חמוץ',
+  'קורנפלקס', 'גרנולה', 'שיבולת שועל', 'אגוזים', 'שקדים', 'צימוקים', 'קפה', 'קפה נמס', 'תה', 'קקאו',
+  // משקאות
+  'מים', 'מים מינרלים', 'סודה', 'קולה', 'ספרייט', 'מיץ', 'מיץ תפוזים', 'מיץ ענבים', 'לימונדה', 'בירה', 'יין',
+  // קפואים
+  'גלידה', 'ירקות קפואים', 'אפונה קפואה', 'פיצה קפואה', 'מלאווח', 'בורקס', 'קרח',
+  // חטיפים וממתקים
+  'שוקולד', 'חטיף', 'במבה', 'ביסלי', 'צ׳יפס', 'תפוצ׳יפס', 'פופקורן', 'מסטיק', 'סוכריות', 'ופל',
+  // תינוקות
+  'מטרנה', 'חיתולים', 'מגבונים', 'מחית לתינוק', 'דייסת תינוק',
+  // ניקיון וטואלטיקה
+  'נייר טואלט', 'מגבות נייר', 'סבון כלים', 'אבקת כביסה', 'מרכך כביסה', 'מטהר', 'אקונומיקה', 'ספריי ניקוי',
+  'שקיות זבל', 'נייר אפייה', 'ניילון נצמד', 'שמפו', 'מרכך שיער', 'סבון גוף', 'משחת שיניים', 'מברשת שיניים',
+  'דאודורנט', 'קרם גוף', 'תחבושות', 'טמפונים', 'גילוח',
+];
+
 export default function HomePage() {
   const today = new Date().toISOString().split('T')[0];
-  const [activeView, setActiveView] = useState<'HOME' | 'INVENTORY' | 'SHOPPING' | 'TASKS' | 'EQUIPMENT' | 'TEMPLATES'>('HOME');
+  const [activeView, setActiveView] = useState<'HOME' | 'INVENTORY' | 'SHOPPING' | 'TASKS' | 'EQUIPMENT' | 'TEMPLATES' | 'SETTINGS'>('HOME');
+  const [appTheme, setAppTheme] = useState('pastel');
+  const [appFont, setAppFont] = useState('heebo');
   const [invFilter, setInvFilter] = useState<'מקרר' | 'מזווה' | 'הכל'>('הכל');
   const [sortBy, setSortBy] = useState<'name' | 'category'>('name');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -47,9 +106,13 @@ export default function HomePage() {
   const [categoryAddLoading, setCategoryAddLoading] = useState(false);
   const emptyQuickAddRow = () => ({ name: '', category: '', newCategory: '' });
   const [quickAddRows, setQuickAddRows] = useState<{ name: string; category: string; newCategory: string }[]>(
-    [emptyQuickAddRow(), emptyQuickAddRow(), emptyQuickAddRow()]
+    [emptyQuickAddRow(), emptyQuickAddRow()]
   );
   const [quickAddSubmitting, setQuickAddSubmitting] = useState(false);
+  const [suggestRow, setSuggestRow] = useState<number | null>(null);
+  const [catGuessingRow, setCatGuessingRow] = useState<number | null>(null);
+  const [editingCategoryName, setEditingCategoryName] = useState<string | null>(null);
+  const [categoryNameValue, setCategoryNameValue] = useState('');
   const [showCategorize, setShowCategorize] = useState(false);
   const [categorizeAssignments, setCategorizeAssignments] = useState<Record<string, string>>({});
   const [categorizeNewCats, setCategorizeNewCats] = useState<Record<string, string>>({});
@@ -102,10 +165,10 @@ export default function HomePage() {
     if (tskRes.data) setTasks(tskRes.data);
     if (equipRes.data) setEquipmentItems(equipRes.data);
     if (tplRes.data) {
-      const itemsByTemplate: Record<string, { id: string; item_name: string }[]> = {};
+      const itemsByTemplate: Record<string, { id: string; item_name: string; category?: string | null }[]> = {};
       for (const it of (tplItemsRes.data || []) as any[]) {
         const tid = it.template_id;
-        (itemsByTemplate[tid] = itemsByTemplate[tid] || []).push({ id: it.id, item_name: it.item_name });
+        (itemsByTemplate[tid] = itemsByTemplate[tid] || []).push({ id: it.id, item_name: it.item_name, category: it.category || null });
       }
       setShoppingTemplates((tplRes.data as any[]).map(t => ({
         id: t.id,
@@ -116,6 +179,25 @@ export default function HomePage() {
   };
 
   useEffect(() => { fetchData(); }, []);
+
+  // Load persisted design preferences.
+  useEffect(() => {
+    try {
+      const t = localStorage.getItem('neo_theme');
+      if (t && THEME_OPTIONS.some(o => o.key === t)) setAppTheme(t);
+      const f = localStorage.getItem('neo_font');
+      if (f && FONT_OPTIONS.some(o => o.key === f)) setAppFont(f);
+    } catch { /* private mode etc. */ }
+  }, []);
+
+  const applyTheme = (t: string) => {
+    setAppTheme(t);
+    try { localStorage.setItem('neo_theme', t); } catch {}
+  };
+  const applyFont = (f: string) => {
+    setAppFont(f);
+    try { localStorage.setItem('neo_font', f); } catch {}
+  };
 
   const handleRefresh = () => window.location.reload();
 
@@ -409,7 +491,59 @@ export default function HomePage() {
   };
 
   const updateQuickAddRow = (idx: number, patch: Partial<{ name: string; category: string; newCategory: string }>) => {
-    setQuickAddRows(prev => prev.map((r, i) => i === idx ? { ...r, ...patch } : r));
+    setQuickAddRows(prev => {
+      const next = prev.map((r, i) => i === idx ? { ...r, ...patch } : r);
+      // Auto-grow: typing into the last row appends a fresh empty row.
+      if (idx === prev.length - 1 && next[idx].name.trim() && next.length < 20) {
+        next.push(emptyQuickAddRow());
+      }
+      return next;
+    });
+  };
+
+  // On entering an item, auto-pick a category (editable) if the user hasn't chosen one.
+  const autoFillRowCategory = async (idx: number, rawName: string) => {
+    const name = (rawName || '').trim();
+    if (!name) return;
+    const current = quickAddRows[idx];
+    if (!current || current.category) return; // user already chose one
+    setCatGuessingRow(idx);
+    try {
+      const guesses = await guessCategories([name]);
+      const normalize = (n: string) => (n || '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
+      const guess = guesses[normalize(name)];
+      if (guess) {
+        setCategories(prev => prev.includes(guess) ? prev : [...prev, guess]);
+        setQuickAddRows(prev => prev.map((r, i) => (i === idx && !r.category) ? { ...r, category: guess } : r));
+      }
+    } finally {
+      setCatGuessingRow(null);
+    }
+  };
+
+  const startRenameCategory = (cat: string) => {
+    setEditingCategoryName(cat);
+    setCategoryNameValue(cat);
+  };
+
+  const saveRenameCategory = async (oldCat: string) => {
+    const newCat = categoryNameValue.trim();
+    setEditingCategoryName(null);
+    if (!newCat || newCat === oldCat) return;
+    await supabase.from('shopping_list').update({ category: newCat }).eq('category', oldCat);
+    await supabase.from('category_order').update({ category_name: newCat }).eq('category_name', oldCat);
+    setCategories(prev => Array.from(new Set(prev.map(c => c === oldCat ? newCat : c))));
+    fetchData();
+    showStatus(`✏️ הקטגוריה שונתה ל"${newCat}"`, true);
+  };
+
+  const deleteCategory = async (cat: string) => {
+    if (!confirm(`למחוק את הקטגוריה "${cat}"? הפריטים שבה יעברו ל"כללי" (לא יימחקו).`)) return;
+    await supabase.from('shopping_list').update({ category: 'כללי' }).eq('category', cat);
+    await supabase.from('category_order').delete().eq('category_name', cat);
+    setCategories(prev => prev.filter(c => c !== cat));
+    fetchData();
+    showStatus(`🗑️ הקטגוריה "${cat}" נמחקה`, true);
   };
 
   // Ask the parser to suggest a category per item name. Returns a map keyed by
@@ -491,7 +625,7 @@ export default function HomePage() {
       if (added > 0) showStatus('');
       else if (duplicates.length > 0) showStatus('⚠️ כבר ברשימה', true);
       else showStatus('✅ עודכן', true);
-      setQuickAddRows([emptyQuickAddRow(), emptyQuickAddRow(), emptyQuickAddRow()]);
+      setQuickAddRows([emptyQuickAddRow(), emptyQuickAddRow()]);
       fetchData();
     } catch {
       showStatus('❌ שגיאה בשמירה', true);
@@ -509,33 +643,36 @@ export default function HomePage() {
     setAddingTemplateId(template.id);
     showStatus('מעבד...', false);
     const normalize = (n: string) => (n || '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
-    const names = template.items.map(i => i.item_name.trim()).filter(Boolean);
+    const itemsList = template.items
+      .map(i => ({ name: i.item_name.trim(), category: (i.category || '').trim() }))
+      .filter(i => i.name);
 
-    // Ask the parser to suggest categories for the whole template in one call.
-    const guesses = await guessCategories(names);
+    // Items without a stored category get an AI suggestion in one call.
+    const needGuess = itemsList.filter(i => !i.category).map(i => i.name);
+    const guesses = needGuess.length ? await guessCategories(needGuess) : {};
 
     const duplicates: string[] = [];
     const summary: { name: string; category: string }[] = [];
     let added = 0;
     try {
-      for (const itemName of names) {
-        const base = normalize(itemName);
+      for (const it of itemsList) {
+        const base = normalize(it.name);
         if (!base) continue;
         if (shoppingList.some(s => normalize(s.item_name || '') === base)) {
-          duplicates.push(itemName);
+          duplicates.push(it.name);
           continue;
         }
-        const cat = guesses[base] || 'כללי';
+        const cat = it.category || guesses[base] || 'כללי';
         if (cat && cat !== 'כללי' && !categories.includes(cat)) {
           await supabase.from('category_order').insert([{ category_name: cat, sort_order: 99 }]);
           setCategories(prev => Array.from(new Set([...prev, cat])));
         }
         await supabase.from('shopping_list').insert([{
-          item_name: itemName,
+          item_name: it.name,
           category: cat,
-          category_auto: true,
+          category_auto: !it.category,
         }]);
-        summary.push({ name: itemName, category: cat });
+        summary.push({ name: it.name, category: cat });
         added++;
       }
       if (duplicates.length > 0) {
@@ -935,15 +1072,37 @@ export default function HomePage() {
     .sort((a, b) => (a.item_name || '').localeCompare(b.item_name || '', 'he'));
 
   const displayCategories = Array.from(new Set([
-    ...categories, 
-    ...safeInventory.map(i => i.category || 'כללי'), 
+    ...categories,
+    ...safeInventory.map(i => i.category || 'כללי'),
     ...safeShoppingList.map(s => s.category || 'כללי')
   ])).filter(c => c !== 'uncertain' && c !== 'null');
+
+  // Autocomplete pool: household history (shopping, inventory, templates) first,
+  // then the general supermarket catalog. Names are stripped of leading emoji and
+  // trailing "(N)" quantity so matching is clean.
+  const stripName = (n: string) => (n || '')
+    .replace(/^[^A-Za-z0-9֐-׿]+/, '')
+    .replace(/\s*\(\d+\)\s*$/, '')
+    .trim();
+  const suggestionPool: string[] = (() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    const push = (raw: string) => {
+      const clean = stripName(raw);
+      const key = clean.toLowerCase();
+      if (clean && !seen.has(key)) { seen.add(key); out.push(clean); }
+    };
+    safeShoppingList.forEach(s => push(s.item_name || ''));
+    safeInventory.forEach(i => push(i.item_name || ''));
+    shoppingTemplates.forEach(t => t.items.forEach(it => push(it.item_name || '')));
+    SUPERMARKET_ITEMS.forEach(push);
+    return out;
+  })();
 
   const activeTasks = tasks.filter(t => t.status !== 'סיימתי');
   const completedTasks = tasks.filter(t => t.status === 'סיימתי');
 
-  const headerGradient = activeView === 'HOME' ? 'from-violet-600 via-fuchsia-600 to-orange-500' : activeView === 'INVENTORY' ? 'from-teal-600 to-emerald-500' : activeView === 'SHOPPING' ? 'from-rose-500 to-orange-500' : activeView === 'EQUIPMENT' ? 'from-sky-600 to-cyan-500' : activeView === 'TEMPLATES' ? 'from-amber-500 to-orange-500' : 'from-indigo-600 to-purple-700';
+  const headerGradient = 'from-[var(--c-grad-a)] via-[var(--c-grad-b)] to-[var(--c-grad-c)]';
 
   const currentEquipItems = equipmentItems.filter(i => i.list_type === equipListType);
   const unpackedEquip = currentEquipItems.filter(i => !i.is_packed);
@@ -951,7 +1110,7 @@ export default function HomePage() {
   const equipCategories = Array.from(new Set([...EQUIP_CATEGORIES, ...currentEquipItems.map(i => i.category)])).filter(Boolean);
 
   return (
-    <main className="min-h-screen bg-slate-50 font-sans pb-20 text-slate-900" dir="rtl">
+    <main data-theme={appTheme} data-font={appFont} className="min-h-screen bg-[var(--c-bg)] pb-20 text-[var(--c-ink)] transition-colors duration-500" dir="rtl">
       {celebration && (
         <div className="fixed inset-0 z-[2000] pointer-events-none overflow-hidden">
           {celebration.fireworks.map((fw, i) => (
@@ -1000,7 +1159,7 @@ export default function HomePage() {
           ))}
         </div>
       )}
-      <header className={`bg-gradient-to-r ${headerGradient} text-white shadow-xl sticky top-0 z-[1000] transition-colors duration-500`}>
+      <header className={`bg-gradient-to-r ${headerGradient} header-flow text-white shadow-xl sticky top-0 z-[1000] transition-colors duration-500`}>
         <div className="max-w-2xl mx-auto p-4 flex flex-col gap-3">
           <div className="flex justify-between items-center relative">
             <h1 className="text-2xl font-black cursor-pointer drop-shadow-md" onClick={() => changeView('HOME')}>הבית של ניאו 🏠</h1>
@@ -1012,11 +1171,13 @@ export default function HomePage() {
                   <span>☰</span> תפריט
                 </button>
                 {isMenuOpen && (
-                  <div className="absolute left-0 top-12 w-48 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col text-slate-800 z-[1001] animate-in fade-in slide-in-from-top-2">
+                  <div className="absolute left-0 top-12 w-48 bg-white rounded-2xl shadow-2xl border border-[var(--c-line)] overflow-hidden flex flex-col text-slate-800 z-[1001] animate-in fade-in slide-in-from-top-2">
                     <button className="p-4 text-right font-black hover:bg-teal-50 border-b flex justify-between" onClick={() => changeView('INVENTORY')}><span>מלאי</span><span>📦</span></button>
                     <button className="p-4 text-right font-black hover:bg-rose-50 border-b flex justify-between" onClick={() => changeView('SHOPPING')}><span>קניות</span><span>🛒</span></button>
-                    <button className="p-4 text-right font-black hover:bg-amber-50 border-b flex justify-between" onClick={() => changeView('TEMPLATES')}><span>הוספת רשימה יעודית</span><span>📝</span></button>
-                    <button className="p-4 text-right font-black hover:bg-purple-50 flex justify-between" onClick={() => changeView('TASKS')}><span>משימות</span><span>📌</span></button>
+                    <button className="p-4 text-right font-black hover:bg-amber-50 border-b flex justify-between" onClick={() => changeView('TEMPLATES')}><span>רשימות</span><span>📝</span></button>
+                    <button className="p-4 text-right font-black hover:bg-sky-50 border-b flex justify-between" onClick={() => changeView('EQUIPMENT')}><span>רשימת ציוד</span><span>🧳</span></button>
+                    <button className="p-4 text-right font-black hover:bg-purple-50 border-b flex justify-between" onClick={() => changeView('TASKS')}><span>משימות</span><span>📌</span></button>
+                    <button className="p-4 text-right font-black hover:bg-[var(--c-soft)] flex justify-between" onClick={() => changeView('SETTINGS')}><span>הגדרות</span><span>⚙️</span></button>
                   </div>
                 )}
               </div>
@@ -1032,7 +1193,7 @@ export default function HomePage() {
 
       {isMenuOpen && <div className="fixed inset-0 z-[999]" onClick={() => setIsMenuOpen(false)}></div>}
 
-      <div className="max-w-2xl mx-auto p-4 relative z-10">
+      <div key={activeView} className="max-w-2xl mx-auto p-4 relative z-10 view-anim">
         
         {/* קופסאות שאלות סיווג למלאי ולקניות */}
         {pendingItems.length > 0 && (activeView === 'INVENTORY' || activeView === 'SHOPPING') && (
@@ -1058,17 +1219,17 @@ export default function HomePage() {
             {disambiguationItems.map((task, idx) => (
               <div key={`dis-${idx}`} className="bg-rose-50 p-6 rounded-[2rem] border-2 border-rose-200 shadow-lg animate-bounce-short">
                 <p className="font-black text-lg mb-4 text-rose-900">
-                  יש כמה סוגים של "<span className="text-rose-600">{task.originalName}</span>" במלאי. <br/> איזה מהם להוריד?
+                  יש כמה סוגים של "<span className="text-[var(--c-primary)]">{task.originalName}</span>" במלאי. <br/> איזה מהם להוריד?
                 </p>
                 <div className="flex flex-wrap gap-2 mb-4">
                   {task.matches.map(match => (
-                    <button key={match.id} onClick={() => handleResolveDisambiguation(task, match)} className="bg-white px-4 py-2 rounded-xl font-bold text-sm shadow-sm border border-rose-100 hover:bg-rose-500 hover:text-white transition-all">
+                    <button key={match.id} onClick={() => handleResolveDisambiguation(task, match)} className="bg-white px-4 py-2 rounded-xl font-bold text-sm shadow-sm border border-rose-100 hover:bg-[var(--c-primary-soft)] hover:text-white transition-all">
                       {match.item_name} ({match.quantity})
                     </button>
                   ))}
                 </div>
                 <div className="flex gap-2 border-t border-rose-200 pt-4">
-                  <button onClick={() => handleResolveDisambiguation(task, 'ALL')} className="flex-1 bg-rose-600 text-white px-4 py-3 rounded-xl font-black text-sm shadow-sm hover:bg-rose-700 transition-all">
+                  <button onClick={() => handleResolveDisambiguation(task, 'ALL')} className="flex-1 bg-[var(--c-primary)] text-white px-4 py-3 rounded-xl font-black text-sm shadow-sm hover:bg-[var(--c-primary-dark)] transition-all">
                     🔄 הכל — {task.removeAll ? "אפס את כולם ל-0" : `הורד ${Math.abs(task.quantityToSubtract)} מכל אחד`}
                   </button>
                   <button onClick={() => setDisambiguationItems(prev => prev.filter(t => t !== task))} className="bg-slate-200 text-slate-500 px-4 py-3 rounded-xl font-bold text-sm shadow-sm hover:bg-slate-300 transition-all">
@@ -1082,19 +1243,19 @@ export default function HomePage() {
 
         {activeView === 'HOME' && (
           <div className="grid grid-cols-1 gap-4 mt-6">
-            <button onClick={() => changeView('INVENTORY')} className="p-6 bg-white rounded-[2rem] shadow-lg border-b-8 border-teal-500 flex items-center justify-between active:scale-95 transition-all">
+            <button onClick={() => changeView('INVENTORY')} className="p-6 bg-white rounded-[2rem] shadow-lg border-b-8 border-[var(--c-acc1)] flex items-center justify-between active:scale-95 transition-all">
                <div className="text-right"><span className="block text-2xl font-black">📦 מלאי</span><span className="text-slate-400 text-sm">ניהול מקרר ומזווה</span></div>
                <span className="text-4xl">🥦</span>
             </button>
-            <button onClick={() => changeView('SHOPPING')} className="p-6 bg-white rounded-[2rem] shadow-lg border-b-8 border-rose-500 flex items-center justify-between active:scale-95 transition-all">
+            <button onClick={() => changeView('SHOPPING')} className="p-6 bg-white rounded-[2rem] shadow-lg border-b-8 border-[var(--c-primary)] flex items-center justify-between active:scale-95 transition-all">
                <div className="text-right"><span className="block text-2xl font-black">🛒 קניות</span><span className="text-slate-400 text-sm">{safeShoppingList.length} פריטים</span></div>
                <span className="text-4xl">🛍️</span>
             </button>
-            <button onClick={() => changeView('TASKS')} className="p-6 bg-white rounded-[2rem] shadow-lg border-b-8 border-indigo-500 text-2xl font-black flex justify-between items-center">
+            <button onClick={() => changeView('TASKS')} className="p-6 bg-white rounded-[2rem] shadow-lg border-b-8 border-[var(--c-acc2)] text-2xl font-black flex justify-between items-center">
                <div className="text-right"><span className="block text-2xl font-black">📝 משימות</span><span className="text-slate-400 text-sm">{activeTasks.length} פתוחות</span></div>
                <span className="text-4xl">📌</span>
             </button>
-            <button onClick={() => changeView('EQUIPMENT')} className="p-6 bg-white rounded-[2rem] shadow-lg border-b-8 border-sky-500 flex items-center justify-between active:scale-95 transition-all">
+            <button onClick={() => changeView('EQUIPMENT')} className="p-6 bg-white rounded-[2rem] shadow-lg border-b-8 border-[var(--c-acc3)] flex items-center justify-between active:scale-95 transition-all">
                <div className="text-right"><span className="block text-2xl font-black">🧳 רשימת ציוד</span><span className="text-slate-400 text-sm">{equipmentItems.filter(i => !i.is_packed).length} לא נארזו</span></div>
                <span className="text-4xl">🎒</span>
             </button>
@@ -1102,9 +1263,9 @@ export default function HomePage() {
         )}
 
         {(activeView === 'INVENTORY' || activeView === 'SHOPPING') && (
-           <div className="mb-4 flex bg-white rounded-xl shadow-sm border border-slate-200 p-1">
-             <button onClick={() => setSortBy('name')} className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all ${sortBy === 'name' ? 'bg-indigo-100 text-indigo-800 shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}>🔤 לפי א״ב</button>
-             <button onClick={() => setSortBy('category')} className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all ${sortBy === 'category' ? 'bg-amber-100 text-amber-800 shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}>📁 לפי קטגוריות</button>
+           <div className="mb-4 flex bg-white rounded-xl shadow-sm border border-[var(--c-line)] p-1">
+             <button onClick={() => setSortBy('name')} className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all ${sortBy === 'name' ? 'bg-indigo-100 text-indigo-800 shadow-sm' : 'text-slate-500 hover:bg-[var(--c-soft)]'}`}>🔤 לפי א״ב</button>
+             <button onClick={() => setSortBy('category')} className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all ${sortBy === 'category' ? 'bg-amber-100 text-amber-800 shadow-sm' : 'text-slate-500 hover:bg-[var(--c-soft)]'}`}>📁 לפי קטגוריות</button>
            </div>
         )}
 
@@ -1116,7 +1277,7 @@ export default function HomePage() {
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder={activeView === 'INVENTORY' ? 'חפש פריט במלאי לעריכה...' : 'חפש פריט בקניות לעריכה...'}
-              className={`w-full pr-12 pl-12 py-3 bg-white rounded-2xl border-2 text-sm font-bold outline-none transition-all shadow-sm ${searchTerm ? (activeView === 'INVENTORY' ? 'border-teal-300 ring-2 ring-teal-100' : 'border-rose-300 ring-2 ring-rose-100') : 'border-slate-200 focus:border-slate-300'}`}
+              className={`w-full pr-12 pl-12 py-3 bg-white rounded-2xl border-2 text-sm font-bold outline-none transition-all shadow-sm ${searchTerm ? (activeView === 'INVENTORY' ? 'border-teal-300 ring-2 ring-teal-100' : 'border-rose-300 ring-2 ring-rose-100') : 'border-[var(--c-line)] focus:border-slate-300'}`}
             />
             {searchTerm && (
               <button
@@ -1139,10 +1300,10 @@ export default function HomePage() {
         )}
 
         {activeView === 'INVENTORY' && (
-          <div className="bg-white p-5 rounded-[2rem] shadow-xl mb-6 border border-slate-50 relative z-20">
+          <div className="bg-white p-5 rounded-[2rem] shadow-xl mb-6 border border-[var(--c-line)] relative z-20">
             <form onSubmit={handleUpdate} className="space-y-3">
-              <textarea value={input} onChange={e => setInput(e.target.value)} placeholder="מה הוספנו/הורדנו מהמלאי? (למשל: תוריד את כל המיונז)" className="w-full p-4 bg-slate-50 rounded-2xl text-sm min-h-[70px] border-none focus:ring-2 focus:ring-amber-300 pointer-events-auto" />
-              <button type="submit" className="w-full p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto bg-teal-600 hover:bg-teal-700">
+              <textarea value={input} onChange={e => setInput(e.target.value)} placeholder="מה הוספנו/הורדנו מהמלאי? (למשל: תוריד את כל המיונז)" className="w-full p-4 bg-[var(--c-soft)] rounded-2xl text-sm min-h-[70px] border-none focus:ring-2 focus:ring-[var(--c-ring)] pointer-events-auto" />
+              <button type="submit" className="w-full p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto bg-[var(--c-primary)] hover:bg-[var(--c-primary-dark)]">
                 עדכן מלאי ✨
               </button>
             </form>
@@ -1155,26 +1316,57 @@ export default function HomePage() {
         )}
 
         {activeView === 'SHOPPING' && (
-          <div className="bg-white p-5 rounded-[2rem] shadow-xl mb-6 border border-slate-50 relative z-20">
+          <div className="bg-white p-5 rounded-[2rem] shadow-xl mb-6 border border-[var(--c-line)] relative z-20">
             <form onSubmit={handleQuickAddSubmit} className="space-y-3">
               {quickAddRows.map((row, i) => {
                 const dropdownCats = displayCategories.filter(c => c && c !== 'uncertain' && c !== 'null' && c !== 'כללי');
+                const q = stripName(row.name).toLowerCase();
+                const matches = (suggestRow === i && q.length >= 1)
+                  ? suggestionPool.filter(s => {
+                      const sl = s.toLowerCase();
+                      return sl.includes(q) && sl !== q;
+                    }).slice(0, 7)
+                  : [];
                 return (
                   <div key={`qa-${i}`} className="space-y-2">
                     <div className="flex gap-2 items-stretch">
-                      <input
-                        type="text"
-                        value={row.name}
-                        onChange={(e) => updateQuickAddRow(i, { name: e.target.value })}
-                        placeholder={i === 0 ? 'פריט לקנייה...' : 'פריט נוסף (אופציונלי)'}
-                        className="flex-1 p-3 bg-slate-50 rounded-xl text-sm font-bold border-none outline-none focus:ring-2 focus:ring-rose-300 pointer-events-auto"
-                      />
+                      <div className="relative flex-1">
+                        <input
+                          type="text"
+                          value={row.name}
+                          onChange={(e) => updateQuickAddRow(i, { name: e.target.value })}
+                          onFocus={() => setSuggestRow(i)}
+                          onBlur={() => { window.setTimeout(() => setSuggestRow(prev => prev === i ? null : prev), 150); autoFillRowCategory(i, row.name); }}
+                          placeholder={i === 0 ? 'פריט לקנייה...' : 'פריט נוסף (אופציונלי)'}
+                          className="w-full p-3 bg-[var(--c-soft)] rounded-xl text-sm font-bold border-none outline-none focus:ring-2 focus:ring-[var(--c-ring)] pointer-events-auto"
+                          autoComplete="off"
+                        />
+                        {matches.length > 0 && (
+                          <div className="absolute z-30 top-full mt-1 inset-x-0 bg-white rounded-xl shadow-2xl border border-[var(--c-line)] overflow-hidden max-h-60 overflow-y-auto">
+                            {matches.map(m => (
+                              <button
+                                key={m}
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  updateQuickAddRow(i, { name: m });
+                                  setSuggestRow(null);
+                                  autoFillRowCategory(i, m);
+                                }}
+                                className="w-full text-right px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-rose-50 hover:text-[var(--c-head)] border-b border-[var(--c-line)] last:border-0 pointer-events-auto transition-colors"
+                              >
+                                {m}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                       <select
                         value={row.category}
                         onChange={(e) => updateQuickAddRow(i, { category: e.target.value, newCategory: e.target.value === '__other__' ? row.newCategory : '' })}
-                        className="p-3 bg-slate-50 rounded-xl text-sm font-bold border-none outline-none focus:ring-2 focus:ring-rose-300 pointer-events-auto min-w-[110px]"
+                        className="p-3 bg-[var(--c-soft)] rounded-xl text-sm font-bold border-none outline-none focus:ring-2 focus:ring-[var(--c-ring)] pointer-events-auto min-w-[110px]"
                       >
-                        <option value="">🤖 סיווג אוטומטי</option>
+                        <option value="">{catGuessingRow === i ? '🤖 מסווג…' : '🤖 סיווג אוטומטי'}</option>
                         <option value="כללי">כללי</option>
                         {dropdownCats.map(c => <option key={c} value={c}>{c}</option>)}
                         <option value="__other__">+ אחר…</option>
@@ -1186,7 +1378,7 @@ export default function HomePage() {
                         value={row.newCategory}
                         onChange={(e) => updateQuickAddRow(i, { newCategory: e.target.value })}
                         placeholder="הקלד שם קטגוריה חדשה..."
-                        className="w-full p-3 bg-rose-50 border-2 border-rose-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-rose-300 pointer-events-auto"
+                        className="w-full p-3 bg-rose-50 border-2 border-rose-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-[var(--c-ring)] pointer-events-auto"
                       />
                     )}
                   </div>
@@ -1196,14 +1388,14 @@ export default function HomePage() {
                 <button
                   type="submit"
                   disabled={quickAddSubmitting || quickAddRows.every(r => !r.name.trim())}
-                  className="flex-1 p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto bg-rose-600 hover:bg-rose-700 disabled:bg-rose-300 disabled:cursor-not-allowed"
+                  className="flex-1 p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto bg-[var(--c-primary)] hover:bg-[var(--c-primary-dark)] disabled:bg-rose-300 disabled:cursor-not-allowed"
                 >
                   הוסף לקניות 🛒
                 </button>
                 <button
                   type="button"
                   onClick={openCategorize}
-                  className="px-4 py-4 rounded-2xl text-white font-black text-sm active:scale-95 transition-all shadow-md pointer-events-auto bg-indigo-500 hover:bg-indigo-600"
+                  className="px-4 py-4 rounded-2xl text-white font-black text-sm active:scale-95 transition-all shadow-md pointer-events-auto bg-indigo-500 hover:bg-[var(--c-primary)]"
                   title="חלוקת פריטים מ׳כללי׳ לקטגוריות"
                 >
                   📁 חלוקה
@@ -1248,7 +1440,7 @@ export default function HomePage() {
                             <select
                               value={chosen}
                               onChange={(e) => setCategorizeAssignments(prev => ({ ...prev, [item.id]: e.target.value }))}
-                              className="p-2 bg-slate-50 rounded-lg text-xs font-bold border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-300 pointer-events-auto min-w-[100px]"
+                              className="p-2 bg-[var(--c-soft)] rounded-lg text-xs font-bold border border-[var(--c-line)] outline-none focus:ring-2 focus:ring-[var(--c-ring)] pointer-events-auto min-w-[100px]"
                             >
                               <option value="כללי">כללי</option>
                               {dropdownCats.map(c => <option key={c} value={c}>{c}</option>)}
@@ -1261,7 +1453,7 @@ export default function HomePage() {
                               value={categorizeNewCats[item.id] || ''}
                               onChange={(e) => setCategorizeNewCats(prev => ({ ...prev, [item.id]: e.target.value }))}
                               placeholder="קטגוריה חדשה..."
-                              className="w-full p-2 bg-rose-50 border border-rose-200 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-rose-300 pointer-events-auto"
+                              className="w-full p-2 bg-rose-50 border border-rose-200 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-[var(--c-ring)] pointer-events-auto"
                             />
                           )}
                         </div>
@@ -1272,7 +1464,7 @@ export default function HomePage() {
                     <button
                       type="button"
                       onClick={applyCategorizeAssignments}
-                      className="flex-1 bg-indigo-600 text-white p-3 rounded-xl font-black text-sm pointer-events-auto hover:bg-indigo-700 transition-colors"
+                      className="flex-1 bg-[var(--c-primary)] text-white p-3 rounded-xl font-black text-sm pointer-events-auto hover:bg-[var(--c-primary-dark)] transition-colors"
                     >
                       💾 שמור שינויים
                     </button>
@@ -1295,12 +1487,12 @@ export default function HomePage() {
             {wordChoiceTasks.map((task, idx) => (
               <div key={`wc-${idx}`} className="bg-rose-50 p-6 rounded-[2rem] border-2 border-rose-200 shadow-lg">
                 <p className="font-black text-lg mb-4 text-rose-900">
-                  למה התכוונת? אחת מהמילים ב<span className="text-rose-600">&quot;{task.originalName}&quot;</span> היא מוצר בפני עצמו.
+                  למה התכוונת? אחת מהמילים ב<span className="text-[var(--c-primary)]">&quot;{task.originalName}&quot;</span> היא מוצר בפני עצמו.
                 </p>
                 <div className="flex flex-wrap gap-2 mb-4">
                   <button
                     onClick={() => handleResolveWordChoice(task, task.originalName)}
-                    className="bg-rose-600 text-white px-4 py-2 rounded-xl font-black text-sm shadow-sm hover:bg-rose-700 transition-all"
+                    className="bg-[var(--c-primary)] text-white px-4 py-2 rounded-xl font-black text-sm shadow-sm hover:bg-[var(--c-primary-dark)] transition-all"
                   >
                     {task.originalName}
                   </button>
@@ -1308,7 +1500,7 @@ export default function HomePage() {
                     <button
                       key={opt}
                       onClick={() => handleResolveWordChoice(task, opt)}
-                      className="bg-white px-4 py-2 rounded-xl font-bold text-sm shadow-sm border border-rose-100 hover:bg-rose-500 hover:text-white transition-all"
+                      className="bg-white px-4 py-2 rounded-xl font-bold text-sm shadow-sm border border-rose-100 hover:bg-[var(--c-primary-soft)] hover:text-white transition-all"
                     >
                       {opt}
                     </button>
@@ -1356,7 +1548,7 @@ export default function HomePage() {
                 <span className="font-bold text-amber-900 text-sm">⚠️ &quot;{name}&quot; כבר ברשימה</span>
                 <button
                   onClick={() => setDuplicateShoppingAlerts(prev => prev.filter(n => n !== name))}
-                  className="bg-amber-500 text-white px-4 py-1.5 rounded-xl font-black text-sm pointer-events-auto hover:bg-amber-600 transition-colors"
+                  className="bg-[var(--c-primary)] text-white px-4 py-1.5 rounded-xl font-black text-sm pointer-events-auto hover:bg-[var(--c-primary-dark)] transition-colors"
                 >
                   הבנתי
                 </button>
@@ -1371,8 +1563,8 @@ export default function HomePage() {
               <div key={`alert-${alert.item_name}`} className="bg-rose-50 border-2 border-rose-200 p-4 rounded-2xl flex justify-between items-center">
                 <span className="font-bold text-rose-900 text-sm">רק {alert.quantity} מ"{alert.item_name}". לקניות?</span>
                 <div className="flex gap-2">
-                  <button onClick={() => addToShopping(alert)} className="bg-rose-600 text-white px-3 py-1.5 rounded-xl font-bold text-sm pointer-events-auto">כן</button>
-                  <button onClick={() => setLowStockAlerts(prev => prev.filter(i => i.item_name !== alert.item_name))} className="bg-white text-rose-600 border border-rose-200 px-3 py-1.5 rounded-xl font-bold text-sm pointer-events-auto">לא</button>
+                  <button onClick={() => addToShopping(alert)} className="bg-[var(--c-primary)] text-white px-3 py-1.5 rounded-xl font-bold text-sm pointer-events-auto">כן</button>
+                  <button onClick={() => setLowStockAlerts(prev => prev.filter(i => i.item_name !== alert.item_name))} className="bg-white text-[var(--c-primary)] border border-rose-200 px-3 py-1.5 rounded-xl font-bold text-sm pointer-events-auto">לא</button>
                 </div>
               </div>
             ))}
@@ -1381,9 +1573,9 @@ export default function HomePage() {
 
         {activeView === 'INVENTORY' && (
           <section className="space-y-6">
-            <div className="flex gap-1 p-1 bg-white rounded-xl shadow-sm border border-slate-100">
+            <div className="flex gap-1 p-1 bg-white rounded-xl shadow-sm border border-[var(--c-line)]">
               {['הכל', 'מקרר', 'מזווה'].map(f => (
-                <button key={f} onClick={() => setInvFilter(f as any)} className={`flex-1 py-2.5 rounded-lg text-xs font-bold transition-all pointer-events-auto ${invFilter === f ? 'bg-teal-500 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>{f}</button>
+                <button key={f} onClick={() => setInvFilter(f as any)} className={`flex-1 py-2.5 rounded-lg text-xs font-bold transition-all pointer-events-auto ${invFilter === f ? 'bg-[var(--c-primary)] text-white shadow-md' : 'text-slate-400 hover:bg-[var(--c-soft)]'}`}>{f}</button>
               ))}
             </div>
 
@@ -1394,7 +1586,7 @@ export default function HomePage() {
                   if (itemsInCat.length === 0) return null;
                   return (
                     <div key={`cat-${cat}`} className="space-y-3">
-                      <h3 className="font-black text-teal-700 text-xs uppercase pr-2 border-r-4 border-teal-400">{cat}</h3>
+                      <h3 className="font-black text-[var(--c-head)] text-xs uppercase pr-2 border-r-4 border-[var(--c-primary)]">{cat}</h3>
                       <div className="grid gap-3">
                         {itemsInCat.map(item => <InventoryCard key={item.id} item={item} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} updateExactQuantity={updateExactQuantity} onPlus={() => handlePlus(item)} onMinus={() => handleMinus(item)} onAddToShopping={addToShopping} shoppingList={shoppingList} onDelete={deleteInventoryItem} editingCatItemId={editingCatItemId} editCatValue={editCatValue} setEditingCatItemId={setEditingCatItemId} setEditCatValue={setEditCatValue} saveEditedCategory={saveEditedCategory} categories={displayCategories} onUpdateLocation={(loc: string) => updateInventoryField(item, 'location', loc)} highlight={!!searchTerm && (item.item_name || '').includes(searchTerm)} />)}
                       </div>
@@ -1421,17 +1613,41 @@ export default function HomePage() {
                   return (
                     <div key={`shop-cat-${cat}`} className="space-y-3">
                       <div className="flex items-center justify-between gap-2 pr-2">
-                        <h3 className="font-black text-rose-700 text-sm uppercase border-r-4 border-rose-400 pr-2 flex-1">{cat}</h3>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCategoryAddOpen(prev => prev === cat ? null : cat);
-                            setCategoryAddInput('');
-                          }}
-                          className="text-[11px] font-black bg-rose-100 text-rose-700 hover:bg-rose-200 px-3 py-1.5 rounded-xl pointer-events-auto transition-colors"
-                        >
-                          {isAddOpen ? '✕ סגור' : '+ הוסף'}
-                        </button>
+                        {editingCategoryName === cat ? (
+                          <div className="flex items-center gap-2 flex-1">
+                            <input
+                              autoFocus
+                              value={categoryNameValue}
+                              onChange={(e) => setCategoryNameValue(e.target.value)}
+                              onKeyDown={(e) => { if (e.key === 'Enter') saveRenameCategory(cat); if (e.key === 'Escape') setEditingCategoryName(null); }}
+                              className="flex-1 border-b-2 border-[var(--c-primary)] bg-rose-50 px-2 py-1 outline-none font-black text-sm pointer-events-auto"
+                            />
+                            <button type="button" onClick={() => saveRenameCategory(cat)} className="bg-green-100 text-green-700 px-2 py-1 rounded-lg text-xs font-black pointer-events-auto">✅</button>
+                            <button type="button" onClick={() => setEditingCategoryName(null)} className="bg-slate-100 text-slate-400 px-2 py-1 rounded-lg text-xs font-black pointer-events-auto">✕</button>
+                          </div>
+                        ) : (
+                          <h3 className="font-black text-[var(--c-head)] text-sm uppercase border-r-4 border-[var(--c-primary)] pr-2 flex-1">{cat}</h3>
+                        )}
+                        {editingCategoryName !== cat && (
+                          <div className="flex items-center gap-1.5">
+                            {cat !== 'כללי' && (
+                              <>
+                                <button type="button" onClick={() => startRenameCategory(cat)} title="שנה שם קטגוריה" className="text-[11px] font-black bg-slate-100 text-slate-500 hover:bg-slate-200 px-2.5 py-1.5 rounded-xl pointer-events-auto transition-colors">✏️</button>
+                                <button type="button" onClick={() => deleteCategory(cat)} title="מחק קטגוריה" className="text-[11px] font-black bg-slate-100 text-slate-500 hover:bg-red-100 hover:text-red-600 px-2.5 py-1.5 rounded-xl pointer-events-auto transition-colors">🗑️</button>
+                              </>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCategoryAddOpen(prev => prev === cat ? null : cat);
+                                setCategoryAddInput('');
+                              }}
+                              className="text-[11px] font-black bg-rose-100 text-[var(--c-head)] hover:bg-rose-200 px-3 py-1.5 rounded-xl pointer-events-auto transition-colors"
+                            >
+                              {isAddOpen ? '✕ סגור' : '+ הוסף'}
+                            </button>
+                          </div>
+                        )}
                       </div>
                       {isAddOpen && (
                         <form onSubmit={(e) => handleCategoryAdd(e, cat)} className="bg-rose-50 border border-rose-200 p-3 rounded-2xl flex flex-wrap gap-2 items-stretch">
@@ -1440,12 +1656,12 @@ export default function HomePage() {
                             value={categoryAddInput}
                             onChange={(e) => setCategoryAddInput(e.target.value)}
                             placeholder={`הוסף ל"${cat}" — תפוזים אפרסק, קישוא צהוב`}
-                            className="flex-1 min-w-[160px] bg-white p-3 rounded-xl text-sm font-bold border border-rose-100 outline-none focus:ring-2 focus:ring-rose-300 pointer-events-auto"
+                            className="flex-1 min-w-[160px] bg-white p-3 rounded-xl text-sm font-bold border border-rose-100 outline-none focus:ring-2 focus:ring-[var(--c-ring)] pointer-events-auto"
                           />
                           <button
                             type="submit"
                             disabled={categoryAddLoading || !categoryAddInput.trim()}
-                            className="bg-rose-600 text-white px-4 py-2 rounded-xl font-black text-sm shadow-sm hover:bg-rose-700 transition-all disabled:bg-rose-300 disabled:cursor-not-allowed pointer-events-auto"
+                            className="bg-[var(--c-primary)] text-white px-4 py-2 rounded-xl font-black text-sm shadow-sm hover:bg-[var(--c-primary-dark)] transition-all disabled:bg-rose-300 disabled:cursor-not-allowed pointer-events-auto"
                           >
                             {categoryAddLoading ? '...' : 'הוסף ✓'}
                           </button>
@@ -1471,27 +1687,27 @@ export default function HomePage() {
 
         {activeView === 'TASKS' && (
           <div className="space-y-8">
-            <button onClick={() => setShowTaskForm(!showTaskForm)} className="w-full bg-indigo-600 text-white p-5 rounded-[1.5rem] font-black shadow-lg active:scale-95 transition-all">
+            <button onClick={() => setShowTaskForm(!showTaskForm)} className="w-full bg-[var(--c-primary)] text-white p-5 rounded-[1.5rem] font-black shadow-lg active:scale-95 transition-all">
               {showTaskForm ? 'סגור טופס ✕' : '+ משימה חדשה'}
             </button>
 
             {showTaskForm && (
               <form onSubmit={handleAddTask} className="bg-white p-6 rounded-[2rem] shadow-xl space-y-4 border border-indigo-50 relative z-20">
-                <input placeholder="שם המשימה" className="w-full p-4 bg-slate-50 rounded-2xl font-bold" value={newTask.title} onChange={e => setNewTask({...newTask, title: e.target.value})} />
-                <textarea placeholder="תיאור (אופציונלי)" className="w-full p-4 bg-slate-50 rounded-2xl text-sm" value={newTask.description} onChange={e => setNewTask({...newTask, description: e.target.value})} />
+                <input placeholder="שם המשימה" className="w-full p-4 bg-[var(--c-soft)] rounded-2xl font-bold" value={newTask.title} onChange={e => setNewTask({...newTask, title: e.target.value})} />
+                <textarea placeholder="תיאור (אופציונלי)" className="w-full p-4 bg-[var(--c-soft)] rounded-2xl text-sm" value={newTask.description} onChange={e => setNewTask({...newTask, description: e.target.value})} />
                 <div className="grid grid-cols-2 gap-3">
-                  <select className="p-4 bg-slate-50 rounded-2xl font-bold text-sm" value={newTask.urgency} onChange={e => setNewTask({...newTask, urgency: e.target.value})}>
+                  <select className="p-4 bg-[var(--c-soft)] rounded-2xl font-bold text-sm" value={newTask.urgency} onChange={e => setNewTask({...newTask, urgency: e.target.value})}>
                     <option>דחופה מאד</option><option>גבוהה</option><option>סטנדרטית</option><option>נמוכה</option>
                   </select>
-                  <select className="p-4 bg-slate-50 rounded-2xl font-bold text-sm" value={newTask.assignee} onChange={e => setNewTask({...newTask, assignee: e.target.value})}>
+                  <select className="p-4 bg-[var(--c-soft)] rounded-2xl font-bold text-sm" value={newTask.assignee} onChange={e => setNewTask({...newTask, assignee: e.target.value})}>
                     <option>שוקי</option><option>הילה</option><option>כולם</option>
                   </select>
                 </div>
-                <input type="date" className="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold text-center" value={newTask.target_date} onChange={e => setNewTask({...newTask, target_date: e.target.value})} />
+                <input type="date" className="w-full p-4 bg-[var(--c-soft)] rounded-2xl text-sm font-bold text-center" value={newTask.target_date} onChange={e => setNewTask({...newTask, target_date: e.target.value})} />
                 <div className="flex flex-col gap-1">
                   <label className="text-[11px] font-black text-slate-500 pr-1">תלות במשימה (אופציונלי)</label>
                   <select
-                    className="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold"
+                    className="w-full p-4 bg-[var(--c-soft)] rounded-2xl text-sm font-bold"
                     value={newTask.depends_on_task_id || ''}
                     onChange={e => setNewTask({...newTask, depends_on_task_id: e.target.value || null})}
                   >
@@ -1502,15 +1718,15 @@ export default function HomePage() {
                   </select>
                 </div>
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => persistNewTask(false)} className="flex-1 bg-emerald-500 text-white p-5 rounded-2xl font-black shadow-md hover:bg-emerald-600 active:scale-95 transition-all">💾 שמור</button>
-                  <button type="button" onClick={() => persistNewTask(true)} className="flex-1 bg-emerald-600 text-white p-5 rounded-2xl font-black shadow-md hover:bg-emerald-700 active:scale-95 transition-all">💬 שמור + וואטסאפ</button>
+                  <button type="button" onClick={() => persistNewTask(false)} className="flex-1 bg-[var(--c-primary)] text-white p-5 rounded-2xl font-black shadow-md hover:bg-[var(--c-primary-dark)] active:scale-95 transition-all">💾 שמור</button>
+                  <button type="button" onClick={() => persistNewTask(true)} className="flex-1 bg-[var(--c-primary-dark)] text-white p-5 rounded-2xl font-black shadow-md hover:bg-emerald-700 active:scale-95 transition-all">💬 שמור + וואטסאפ</button>
                 </div>
               </form>
             )}
 
             <div className="space-y-4">
               {activeTasks.map(task => {
-                const urgencyColor = task.urgency === 'דחופה מאד' ? 'border-red-500 bg-red-50' : task.urgency === 'גבוהה' ? 'border-orange-400 bg-orange-50' : task.urgency === 'נמוכה' ? 'border-emerald-300 bg-emerald-50/40' : 'border-slate-200 bg-white';
+                const urgencyColor = task.urgency === 'דחופה מאד' ? 'border-red-500 bg-red-50' : task.urgency === 'גבוהה' ? 'border-orange-400 bg-orange-50' : task.urgency === 'נמוכה' ? 'border-emerald-300 bg-emerald-50/40' : 'border-[var(--c-line)] bg-white';
                 const isPlural = (task.assignee || '').includes('כולם');
                 const blockedBy = getBlockingTask(task);
                 const isEditing = editingTaskId === task.id;
@@ -1522,13 +1738,13 @@ export default function HomePage() {
                   <div
                     key={task.id}
                     onClick={() => !isPoofing && startEditTask(task, 'all')}
-                    className={`bg-white p-6 rounded-[2rem] shadow-md border-r-8 ${urgencyColor} relative group cursor-pointer ${blockedBy ? 'opacity-60 grayscale-[40%]' : ''} ${isEditing ? 'ring-2 ring-indigo-300' : ''} ${isPoofing ? 'animate-task-poof overflow-hidden' : ''}`}
+                    className={`bg-white p-6 rounded-[2rem] shadow-md border-r-8 ${urgencyColor} relative group cursor-pointer ${blockedBy ? 'opacity-60 grayscale-[40%]' : ''} ${isEditing ? 'ring-2 ring-[var(--c-ring)]' : ''} ${isPoofing ? 'animate-task-poof overflow-hidden' : ''}`}
                   >
                     <div className="flex justify-between items-start gap-4 mb-2">
                       <h3 className="font-black text-xl text-slate-800 flex-1">{task.title}</h3>
                       <button
                         onClick={(e) => { stop(e); deleteTask(task.id!); }}
-                        className="px-3 py-1.5 rounded-xl bg-slate-50 text-slate-400 text-[10px] font-black border border-slate-100 hover:bg-red-50 hover:text-red-600 hover:border-red-100 transition-all pointer-events-auto"
+                        className="px-3 py-1.5 rounded-xl bg-[var(--c-soft)] text-slate-400 text-[10px] font-black border border-[var(--c-line)] hover:bg-red-50 hover:text-red-600 hover:border-red-100 transition-all pointer-events-auto"
                       >
                         מחק 🗑️
                       </button>
@@ -1541,32 +1757,32 @@ export default function HomePage() {
                       </div>
                     )}
                     <div className="flex flex-wrap gap-2 text-[10px] font-black text-slate-400">
-                      <button type="button" onClick={(e) => { stop(e); startEditTask(task, 'assignee'); }} className={`bg-slate-50 ${chipBase}`}>👤 {task.assignee}</button>
-                      <button type="button" onClick={(e) => { stop(e); startEditTask(task, 'date'); }} className={`bg-slate-50 ${chipBase}`}>📅 {task.target_date}</button>
-                      <button type="button" onClick={(e) => { stop(e); startEditTask(task, 'urgency'); }} className={`bg-slate-50 ${chipBase}`}>{urgencyEmoji(task.urgency)} {task.urgency}</button>
+                      <button type="button" onClick={(e) => { stop(e); startEditTask(task, 'assignee'); }} className={`bg-[var(--c-soft)] ${chipBase}`}>👤 {task.assignee}</button>
+                      <button type="button" onClick={(e) => { stop(e); startEditTask(task, 'date'); }} className={`bg-[var(--c-soft)] ${chipBase}`}>📅 {task.target_date}</button>
+                      <button type="button" onClick={(e) => { stop(e); startEditTask(task, 'urgency'); }} className={`bg-[var(--c-soft)] ${chipBase}`}>{urgencyEmoji(task.urgency)} {task.urgency}</button>
                     </div>
 
                     {isEditing && draft && (
-                      <div onClick={stop} className="mt-5 pt-5 border-t border-slate-200 space-y-3">
+                      <div onClick={stop} className="mt-5 pt-5 border-t border-[var(--c-line)] space-y-3">
                         <input
                           autoFocus={editTaskFocus === 'all' || editTaskFocus === 'title'}
                           value={draft.title}
                           onChange={e => setEditTaskDraft({ ...draft, title: e.target.value })}
                           placeholder="שם המשימה"
-                          className="w-full p-3 bg-slate-50 rounded-xl font-bold text-sm pointer-events-auto"
+                          className="w-full p-3 bg-[var(--c-soft)] rounded-xl font-bold text-sm pointer-events-auto"
                         />
                         <textarea
                           value={draft.description || ''}
                           onChange={e => setEditTaskDraft({ ...draft, description: e.target.value })}
                           placeholder="תיאור (אופציונלי)"
-                          className="w-full p-3 bg-slate-50 rounded-xl text-sm pointer-events-auto"
+                          className="w-full p-3 bg-[var(--c-soft)] rounded-xl text-sm pointer-events-auto"
                         />
                         <div className="grid grid-cols-2 gap-2">
                           <select
                             autoFocus={editTaskFocus === 'urgency'}
                             value={draft.urgency}
                             onChange={e => setEditTaskDraft({ ...draft, urgency: e.target.value })}
-                            className={`p-3 bg-slate-50 rounded-xl font-bold text-sm pointer-events-auto ${editTaskFocus === 'urgency' ? 'ring-2 ring-indigo-300' : ''}`}
+                            className={`p-3 bg-[var(--c-soft)] rounded-xl font-bold text-sm pointer-events-auto ${editTaskFocus === 'urgency' ? 'ring-2 ring-[var(--c-ring)]' : ''}`}
                           >
                             <option>דחופה מאד</option><option>גבוהה</option><option>סטנדרטית</option><option>נמוכה</option>
                           </select>
@@ -1574,7 +1790,7 @@ export default function HomePage() {
                             autoFocus={editTaskFocus === 'assignee'}
                             value={draft.assignee}
                             onChange={e => setEditTaskDraft({ ...draft, assignee: e.target.value })}
-                            className={`p-3 bg-slate-50 rounded-xl font-bold text-sm pointer-events-auto ${editTaskFocus === 'assignee' ? 'ring-2 ring-indigo-300' : ''}`}
+                            className={`p-3 bg-[var(--c-soft)] rounded-xl font-bold text-sm pointer-events-auto ${editTaskFocus === 'assignee' ? 'ring-2 ring-[var(--c-ring)]' : ''}`}
                           >
                             <option>שוקי</option><option>הילה</option><option>כולם</option>
                           </select>
@@ -1584,7 +1800,7 @@ export default function HomePage() {
                           autoFocus={editTaskFocus === 'date'}
                           value={draft.target_date}
                           onChange={e => setEditTaskDraft({ ...draft, target_date: e.target.value })}
-                          className={`w-full p-3 bg-slate-50 rounded-xl text-sm font-bold text-center pointer-events-auto ${editTaskFocus === 'date' ? 'ring-2 ring-indigo-300' : ''}`}
+                          className={`w-full p-3 bg-[var(--c-soft)] rounded-xl text-sm font-bold text-center pointer-events-auto ${editTaskFocus === 'date' ? 'ring-2 ring-[var(--c-ring)]' : ''}`}
                         />
                         <div className="flex flex-col gap-1">
                           <label className="text-[11px] font-black text-slate-500 pr-1">תלות במשימה</label>
@@ -1592,7 +1808,7 @@ export default function HomePage() {
                             autoFocus={editTaskFocus === 'depends'}
                             value={draft.depends_on_task_id || ''}
                             onChange={e => setEditTaskDraft({ ...draft, depends_on_task_id: e.target.value || null })}
-                            className="p-3 bg-slate-50 rounded-xl text-sm font-bold pointer-events-auto"
+                            className="p-3 bg-[var(--c-soft)] rounded-xl text-sm font-bold pointer-events-auto"
                           >
                             <option value="">ללא תלות</option>
                             {tasks.filter(t => t.id !== task.id && t.status !== 'סיימתי').map(t => (
@@ -1601,7 +1817,7 @@ export default function HomePage() {
                           </select>
                         </div>
                         <div className="flex gap-2 pt-1">
-                          <button type="button" onClick={saveEditTask} className="flex-1 bg-indigo-600 text-white p-3 rounded-xl font-black text-sm pointer-events-auto hover:bg-indigo-700 transition-all">💾 שמור שינויים</button>
+                          <button type="button" onClick={saveEditTask} className="flex-1 bg-[var(--c-primary)] text-white p-3 rounded-xl font-black text-sm pointer-events-auto hover:bg-[var(--c-primary-dark)] transition-all">💾 שמור שינויים</button>
                           <button type="button" onClick={cancelEditTask} className="flex-1 bg-slate-200 text-slate-600 p-3 rounded-xl font-bold text-sm pointer-events-auto hover:bg-slate-300 transition-all">ביטול</button>
                         </div>
                       </div>
@@ -1618,14 +1834,14 @@ export default function HomePage() {
                       <button
                         disabled={!!blockedBy}
                         onClick={() => updateTaskStatus(task.id!, 'בתהליך')}
-                        className={`flex-1 py-2.5 rounded-xl text-[11px] font-black transition-all pointer-events-auto disabled:opacity-50 disabled:cursor-not-allowed ${task.status === 'בתהליך' ? 'bg-blue-500 text-white shadow-sm' : 'text-slate-400'}`}
+                        className={`flex-1 py-2.5 rounded-xl text-[11px] font-black transition-all pointer-events-auto disabled:opacity-50 disabled:cursor-not-allowed ${task.status === 'בתהליך' ? 'bg-[var(--c-head)] text-white shadow-sm' : 'text-slate-400'}`}
                       >
                         בתהליך
                       </button>
                       <button
                         disabled={!!blockedBy}
                         onClick={() => updateTaskStatus(task.id!, 'סיימתי')}
-                        className="flex-1 py-2.5 rounded-xl text-[11px] font-black text-slate-400 hover:bg-emerald-500 hover:text-white transition-all pointer-events-auto disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex-1 py-2.5 rounded-xl text-[11px] font-black text-slate-400 hover:bg-[var(--c-primary)] hover:text-white transition-all pointer-events-auto disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {isPlural ? 'סיימנו' : 'סיימתי'}
                       </button>
@@ -1636,7 +1852,7 @@ export default function HomePage() {
             </div>
 
             {completedTasks.length > 0 && (
-              <div className="mt-16 pt-8 border-t-2 border-slate-200">
+              <div className="mt-16 pt-8 border-t-2 border-[var(--c-line)]">
                 <h3 className="font-black text-slate-400 text-sm uppercase mb-6 pr-2">✅ משימות שהסתיימו:</h3>
                 <div className="space-y-4 opacity-70 hover:opacity-100 transition-opacity">
                   {completedTasks.map(task => <CompletedTaskCard key={task.id} task={task} onRestore={handleRestoreTask} onDelete={deleteTask} />)}
@@ -1649,25 +1865,25 @@ export default function HomePage() {
         {activeView === 'EQUIPMENT' && (
           <div className="space-y-6">
             {/* List type tabs */}
-            <div className="flex gap-1 p-1 bg-white rounded-xl shadow-sm border border-slate-100">
+            <div className="flex gap-1 p-1 bg-white rounded-xl shadow-sm border border-[var(--c-line)]">
               {(['חו"ל', 'חד"כ', 'סופ"ש'] as const).map(lt => (
-                <button key={lt} onClick={() => setEquipListType(lt)} className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all pointer-events-auto ${equipListType === lt ? 'bg-sky-500 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>{lt}</button>
+                <button key={lt} onClick={() => setEquipListType(lt)} className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all pointer-events-auto ${equipListType === lt ? 'bg-[var(--c-primary)] text-white shadow-md' : 'text-slate-400 hover:bg-[var(--c-soft)]'}`}>{lt}</button>
               ))}
             </div>
 
             {/* Free text input */}
-            <div className="bg-white p-5 rounded-[2rem] shadow-xl border border-slate-50 relative z-20">
+            <div className="bg-white p-5 rounded-[2rem] shadow-xl border border-[var(--c-line)] relative z-20">
               <form onSubmit={handleEquipmentUpdate} className="space-y-3">
-                <textarea value={input} onChange={e => setInput(e.target.value)} placeholder="הוסף או הורד ציוד (למשל: מטען, אוזניות, תרופות שינה)" className="w-full p-4 bg-slate-50 rounded-2xl text-sm min-h-[70px] border-none focus:ring-2 focus:ring-sky-300 pointer-events-auto" />
+                <textarea value={input} onChange={e => setInput(e.target.value)} placeholder="הוסף או הורד ציוד (למשל: מטען, אוזניות, תרופות שינה)" className="w-full p-4 bg-[var(--c-soft)] rounded-2xl text-sm min-h-[70px] border-none focus:ring-2 focus:ring-[var(--c-ring)] pointer-events-auto" />
                 <div className="flex gap-2">
-                  <button type="submit" className="flex-1 p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto bg-sky-600 hover:bg-sky-700">
+                  <button type="submit" className="flex-1 p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto bg-[var(--c-primary)] hover:bg-[var(--c-primary-dark)]">
                     עדכן רשימה 🧳
                   </button>
                   <button
                     type="button"
                     onClick={() => resetPacking(equipListType)}
                     disabled={packedEquip.length === 0}
-                    className="p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto bg-amber-500 hover:bg-amber-600 disabled:bg-slate-300 disabled:cursor-not-allowed"
+                    className="p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto bg-[var(--c-primary)] hover:bg-[var(--c-primary-dark)] disabled:bg-slate-300 disabled:cursor-not-allowed"
                     title="אפס את כל הסימונים"
                   >
                     חדש ✨
@@ -1687,19 +1903,19 @@ export default function HomePage() {
               if (items.length === 0) return null;
               return (
                 <div key={`eqcat-${cat}`} className="space-y-2">
-                  <h3 className="font-black text-sky-700 text-xs uppercase pr-2 border-r-4 border-sky-400">{cat}</h3>
+                  <h3 className="font-black text-[var(--c-head)] text-xs uppercase pr-2 border-r-4 border-[var(--c-primary)]">{cat}</h3>
                   <div className="grid gap-2">
                     {items.map(item => (
-                      <div key={item.id} className="flex justify-between items-center bg-white p-4 rounded-[1.5rem] shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+                      <div key={item.id} className="flex justify-between items-center bg-white p-4 rounded-[1.5rem] shadow-sm border border-[var(--c-line)] hover:shadow-md transition-shadow">
                         <div className="flex items-center gap-3 flex-1">
                           <button onClick={() => togglePacked(item)} className="w-7 h-7 rounded-lg border-2 border-sky-300 bg-white flex items-center justify-center hover:bg-sky-50 transition-colors pointer-events-auto flex-shrink-0" />
                           {editingId === item.id ? (
                             <div className="flex items-center gap-2 flex-1">
-                              <input autoFocus value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedName(item.id!, 'equipment_items')} className="border-b-2 border-sky-500 bg-sky-50 px-2 py-1 outline-none font-bold text-sm flex-1 pointer-events-auto" />
+                              <input autoFocus value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedName(item.id!, 'equipment_items')} className="border-b-2 border-[var(--c-primary)] bg-sky-50 px-2 py-1 outline-none font-bold text-sm flex-1 pointer-events-auto" />
                               <button onClick={() => saveEditedName(item.id!, 'equipment_items')} className="bg-green-100 text-green-700 p-2 rounded-lg pointer-events-auto shadow-sm">✅</button>
                             </div>
                           ) : (
-                            <span onClick={() => { setEditingId(item.id!); setEditNameValue(item.item_name); }} className="font-bold text-slate-800 cursor-pointer hover:text-sky-600 pointer-events-auto flex-1">{item.item_name}</span>
+                            <span onClick={() => { setEditingId(item.id!); setEditNameValue(item.item_name); }} className="font-bold text-slate-800 cursor-pointer hover:text-[var(--c-primary)] pointer-events-auto flex-1">{item.item_name}</span>
                           )}
                         </div>
                         <button onClick={() => { if (confirm(`למחוק לצמיתות את "${item.item_name}"?`)) deleteEquipmentItem(item); }} className="text-slate-300 hover:text-red-500 text-sm font-bold pointer-events-auto transition-colors px-2">🗑️</button>
@@ -1719,13 +1935,13 @@ export default function HomePage() {
 
             {/* Packed items */}
             {packedEquip.length > 0 && (
-              <div className="mt-8 pt-6 border-t-2 border-slate-200">
+              <div className="mt-8 pt-6 border-t-2 border-[var(--c-line)]">
                 <h3 className="font-black text-emerald-600 text-sm mb-4 pr-2">✅ נארז ({packedEquip.length})</h3>
                 <div className="grid gap-2 opacity-70">
                   {packedEquip.map(item => (
                     <div key={item.id} className="flex justify-between items-center bg-emerald-50 p-3 rounded-xl border border-emerald-100">
                       <div className="flex items-center gap-3 flex-1">
-                        <button onClick={() => togglePacked(item)} className="w-7 h-7 rounded-lg border-2 border-emerald-400 bg-emerald-500 flex items-center justify-center pointer-events-auto">
+                        <button onClick={() => togglePacked(item)} className="w-7 h-7 rounded-lg border-2 border-emerald-400 bg-[var(--c-primary)] flex items-center justify-center pointer-events-auto">
                           <span className="text-white text-sm font-black">✓</span>
                         </button>
                         <span className="font-medium text-emerald-800 line-through text-sm">{item.item_name}</span>
@@ -1751,7 +1967,7 @@ export default function HomePage() {
               <button
                 type="button"
                 onClick={() => { setShowCreateTemplate(true); setNewTemplateName(''); setNewTemplateItemsText(''); }}
-                className="w-full bg-amber-500 hover:bg-amber-600 text-white p-4 rounded-2xl font-black shadow-md active:scale-95 transition-all pointer-events-auto"
+                className="w-full bg-[var(--c-primary)] hover:bg-[var(--c-primary-dark)] text-white p-4 rounded-2xl font-black shadow-md active:scale-95 transition-all pointer-events-auto"
               >
                 + צור רשימה חדשה
               </button>
@@ -1765,19 +1981,19 @@ export default function HomePage() {
                   value={newTemplateName}
                   onChange={(e) => setNewTemplateName(e.target.value)}
                   placeholder="שם הרשימה (למשל: ארוחת שישי)"
-                  className="w-full p-3 bg-slate-50 rounded-xl font-bold text-sm border-none outline-none focus:ring-2 focus:ring-amber-300 pointer-events-auto"
+                  className="w-full p-3 bg-[var(--c-soft)] rounded-xl font-bold text-sm border-none outline-none focus:ring-2 focus:ring-[var(--c-ring)] pointer-events-auto"
                 />
                 <textarea
                   value={newTemplateItemsText}
                   onChange={(e) => setNewTemplateItemsText(e.target.value)}
                   placeholder={"פריט אחד בכל שורה. למשל:\n🍅 עגבניות\n🥒 מלפפון\n🧀 גבינה"}
-                  className="w-full p-3 bg-slate-50 rounded-xl text-sm min-h-[160px] border-none outline-none focus:ring-2 focus:ring-amber-300 pointer-events-auto"
+                  className="w-full p-3 bg-[var(--c-soft)] rounded-xl text-sm min-h-[160px] border-none outline-none focus:ring-2 focus:ring-[var(--c-ring)] pointer-events-auto"
                 />
                 <div className="flex gap-2">
                   <button
                     type="button"
                     onClick={createTemplate}
-                    className="flex-1 bg-amber-600 text-white p-3 rounded-xl font-black text-sm hover:bg-amber-700 pointer-events-auto"
+                    className="flex-1 bg-[var(--c-primary-dark)] text-white p-3 rounded-xl font-black text-sm hover:bg-amber-700 pointer-events-auto"
                   >
                     💾 שמור רשימה
                   </button>
@@ -1825,7 +2041,7 @@ export default function HomePage() {
                           type="button"
                           disabled={isAdding}
                           onClick={() => addTemplateToShopping(tpl)}
-                          className="bg-rose-600 hover:bg-rose-700 text-white px-4 py-3 rounded-xl font-black text-sm shadow-md pointer-events-auto disabled:bg-rose-300 disabled:cursor-not-allowed"
+                          className="bg-[var(--c-primary)] hover:bg-[var(--c-primary-dark)] text-white px-4 py-3 rounded-xl font-black text-sm shadow-md pointer-events-auto disabled:bg-rose-300 disabled:cursor-not-allowed"
                           title="הוסף את כל הפריטים לקניות"
                         >
                           {isAdding ? '...' : '🛒 הוסף'}
@@ -1839,22 +2055,113 @@ export default function HomePage() {
                           🗑️
                         </button>
                       </div>
-                      {isExpanded && tpl.items.length > 0 && (
-                        <div className="px-4 pb-4 pt-2 border-t border-amber-100 bg-amber-50/30">
-                          <ul className="space-y-1">
-                            {tpl.items.map(it => (
-                              <li key={it.id} className="text-sm font-bold text-slate-700">
-                                <span className="text-amber-500 mr-1">•</span> {it.item_name}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
+                      {isExpanded && tpl.items.length > 0 && (() => {
+                        const tplCats = Array.from(new Set(tpl.items.map(it => (it.category || '').trim()).filter(Boolean)));
+                        const hasCats = tplCats.length > 0;
+                        return (
+                          <div className="px-4 pb-4 pt-2 border-t border-[var(--c-line)] bg-[var(--c-soft)]">
+                            {hasCats ? (
+                              <div className="space-y-3">
+                                {tplCats.map(cat => (
+                                  <div key={`tplcat-${tpl.id}-${cat}`}>
+                                    <h4 className="font-black text-[var(--c-head)] text-xs uppercase pr-2 border-r-4 border-[var(--c-primary)] mb-1">{cat}</h4>
+                                    <ul className="space-y-1">
+                                      {tpl.items.filter(it => (it.category || '').trim() === cat).map(it => (
+                                        <li key={it.id} className="text-sm font-bold text-slate-700">
+                                          <span className="text-[var(--c-primary)] mr-1">•</span> {it.item_name}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                ))}
+                                {tpl.items.some(it => !(it.category || '').trim()) && (
+                                  <div>
+                                    <h4 className="font-black text-[var(--c-head)] text-xs uppercase pr-2 border-r-4 border-[var(--c-line)] mb-1">כללי</h4>
+                                    <ul className="space-y-1">
+                                      {tpl.items.filter(it => !(it.category || '').trim()).map(it => (
+                                        <li key={it.id} className="text-sm font-bold text-slate-700">
+                                          <span className="text-[var(--c-primary)] mr-1">•</span> {it.item_name}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <ul className="space-y-1">
+                                {tpl.items.map(it => (
+                                  <li key={it.id} className="text-sm font-bold text-slate-700">
+                                    <span className="text-[var(--c-primary)] mr-1">•</span> {it.item_name}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })}
               </div>
             )}
+          </div>
+        )}
+
+        {activeView === 'SETTINGS' && (
+          <div className="space-y-6">
+            <div className="bg-white p-6 rounded-[2rem] shadow-md border border-[var(--c-line)]">
+              <h2 className="font-black text-xl text-[var(--c-head)] mb-1">🎨 עיצוב</h2>
+              <p className="text-xs text-slate-400 font-bold mb-4">בחר ערכת עיצוב — מוחלת מיד ונשמרת במכשיר</p>
+              <div className="grid gap-3">
+                {THEME_OPTIONS.map(t => {
+                  const active = appTheme === t.key;
+                  return (
+                    <button
+                      key={t.key}
+                      type="button"
+                      onClick={() => applyTheme(t.key)}
+                      className={`flex items-center gap-3 p-4 rounded-2xl border-2 text-right transition-all pointer-events-auto ${active ? 'border-[var(--c-primary)] ring-2 ring-[var(--c-ring)] bg-[var(--c-soft)]' : 'border-[var(--c-line)] bg-white hover:bg-[var(--c-soft)]'}`}
+                    >
+                      <span className="flex gap-1.5 flex-shrink-0" dir="ltr">
+                        <span className="w-6 h-6 rounded-full border border-black/10" style={{ background: t.bg }} />
+                        <span className="w-6 h-6 rounded-full" style={{ background: t.primary }} />
+                        <span className="w-6 h-6 rounded-full" style={{ background: t.head }} />
+                      </span>
+                      <span className="flex-1">
+                        <span className="block font-black text-slate-800">{t.name}</span>
+                        <span className="block text-[11px] font-bold text-slate-400">{t.desc}</span>
+                      </span>
+                      {active && <span className="text-[var(--c-primary)] font-black text-lg flex-shrink-0">✓</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-[2rem] shadow-md border border-[var(--c-line)]">
+              <h2 className="font-black text-xl text-[var(--c-head)] mb-1">🔤 פונט</h2>
+              <p className="text-xs text-slate-400 font-bold mb-4">בחר פונט לכל האפליקציה — מוחל מיד ונשמר במכשיר</p>
+              <div className="grid gap-2">
+                {FONT_OPTIONS.map(f => {
+                  const active = appFont === f.key;
+                  return (
+                    <button
+                      key={f.key}
+                      type="button"
+                      onClick={() => applyFont(f.key)}
+                      style={{ fontFamily: `${f.varName}, sans-serif` }}
+                      className={`flex items-center gap-3 p-4 rounded-2xl border-2 text-right transition-all pointer-events-auto ${active ? 'border-[var(--c-primary)] ring-2 ring-[var(--c-ring)] bg-[var(--c-soft)]' : 'border-[var(--c-line)] bg-white hover:bg-[var(--c-soft)]'}`}
+                    >
+                      <span className="flex-1">
+                        <span className="block font-bold text-lg text-slate-800">{f.name}</span>
+                        <span className="block text-xs text-slate-400">אבגדה ABC 123 — {f.desc}</span>
+                      </span>
+                      {active && <span className="text-[var(--c-primary)] font-black text-lg flex-shrink-0">✓</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -1879,7 +2186,7 @@ function ClassificationCard({ item, categories, onResolve, onIgnore }: any) {
           </button>
         ))}
       </div>
-      <div className="flex gap-2 bg-slate-50 p-2 rounded-2xl border border-slate-100 focus-within:border-amber-300 focus-within:ring-2 focus-within:ring-amber-100 transition-all">
+      <div className="flex gap-2 bg-[var(--c-soft)] p-2 rounded-2xl border border-[var(--c-line)] focus-within:border-amber-300 focus-within:ring-2 focus-within:ring-amber-100 transition-all">
         <input 
           value={customCat} 
           onChange={e => setCustomCat(e.target.value)} 
@@ -1903,15 +2210,15 @@ function CompletedTaskCard({ task, onRestore, onDelete }: any) {
   const today = new Date().toISOString().split('T')[0];
   const [newDate, setNewDate] = useState(today);
   return (
-    <div className="bg-slate-100 p-5 rounded-[2rem] border border-slate-200">
+    <div className="bg-slate-100 p-5 rounded-[2rem] border border-[var(--c-line)]">
       <div className="flex justify-between items-start mb-3">
         <h3 className="font-black text-base line-through text-slate-500 flex-1">{task.title}</h3>
-        <button onClick={() => onDelete(task.id!)} className="px-3 py-1.5 rounded-xl bg-white text-slate-500 text-[11px] font-black border border-slate-200 hover:bg-red-50 hover:text-red-700 transition-colors pointer-events-auto shadow-sm">מחק 🗑️</button>
+        <button onClick={() => onDelete(task.id!)} className="px-3 py-1.5 rounded-xl bg-white text-slate-500 text-[11px] font-black border border-[var(--c-line)] hover:bg-red-50 hover:text-red-700 transition-colors pointer-events-auto shadow-sm">מחק 🗑️</button>
       </div>
-      <div className="mt-4 pt-4 border-t border-slate-200 flex flex-col gap-2">
+      <div className="mt-4 pt-4 border-t border-[var(--c-line)] flex flex-col gap-2">
         <label className="text-[10px] font-black text-slate-400">תאריך יעד חדש לשחזור:</label>
         <div className="flex gap-2">
-          <input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} className="flex-1 p-2 rounded-xl text-xs font-black bg-white border border-slate-200 pointer-events-auto" />
+          <input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} className="flex-1 p-2 rounded-xl text-xs font-black bg-white border border-[var(--c-line)] pointer-events-auto" />
           <button onClick={() => onRestore(task.id!, newDate)} className="bg-slate-200 text-slate-700 px-4 py-2 rounded-xl text-[10px] font-black shadow-sm hover:bg-slate-300 transition-colors pointer-events-auto">שחזר ↺</button>
         </div>
       </div>
@@ -1925,31 +2232,31 @@ function InventoryCard({ item, editingId, editNameValue, setEditingId, setEditNa
   const otherLocation = (item.location || 'מזווה') === 'מקרר' ? 'מזווה' : 'מקרר';
   const locEmoji = (item.location || 'מזווה') === 'מקרר' ? '❄️' : '🏠';
   return (
-    <div className={`flex flex-col gap-2 bg-white p-4 rounded-[1.5rem] shadow-sm border transition-shadow hover:shadow-md ${highlight ? 'border-amber-400 ring-2 ring-amber-200 bg-amber-50/30' : isLow ? 'border-rose-200 bg-rose-50/30' : 'border-slate-100'}`}>
+    <div className={`flex flex-col gap-2 bg-white p-4 rounded-[1.5rem] shadow-sm border transition-shadow hover:shadow-md ${highlight ? 'border-amber-400 ring-2 ring-amber-200 bg-amber-50/30' : isLow ? 'border-rose-200 bg-rose-50/30' : 'border-[var(--c-line)]'}`}>
       <div className="flex justify-between items-center gap-2">
         <div className="text-right flex-1 min-w-0">
           {editingId === item.id ? (
             <div className="flex items-center gap-2 mb-1">
-              <input autoFocus value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedName(item.id, 'inventory_items')} className="border-b-2 border-teal-500 bg-teal-50 px-2 py-1 outline-none font-bold text-lg w-[120px] pointer-events-auto" />
+              <input autoFocus value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedName(item.id, 'inventory_items')} className="border-b-2 border-[var(--c-primary)] bg-teal-50 px-2 py-1 outline-none font-bold text-lg w-[120px] pointer-events-auto" />
               <button onClick={() => saveEditedName(item.id, 'inventory_items')} className="bg-green-100 text-green-700 p-2 rounded-lg pointer-events-auto shadow-sm">✅</button>
             </div>
           ) : (
-            <span onClick={() => {setEditingId(item.id); setEditNameValue(item.item_name || 'פריט לא ידוע');}} className="block font-bold text-lg text-slate-800 cursor-pointer hover:text-teal-600 hover:underline decoration-dashed decoration-slate-300 pointer-events-auto transition-colors">{item.item_name || 'פריט לא ידוע'}</span>
+            <span onClick={() => {setEditingId(item.id); setEditNameValue(item.item_name || 'פריט לא ידוע');}} className="block font-bold text-lg text-slate-800 cursor-pointer hover:text-[var(--c-primary)] hover:underline decoration-dashed decoration-slate-300 pointer-events-auto transition-colors">{item.item_name || 'פריט לא ידוע'}</span>
           )}
           {item.updated_at && (
             <span className="text-[10px] font-bold text-slate-400 block mt-0.5">{new Date(item.updated_at).toLocaleDateString('he-IL')}</span>
           )}
           {isLow && !alreadyInShopping && (
-            <button onClick={() => onAddToShopping(item)} className="block mt-1 text-[10px] font-black text-rose-600 bg-rose-100 px-3 py-1 rounded-lg hover:bg-rose-200 pointer-events-auto transition-colors">+ הוסף לקניות</button>
+            <button onClick={() => onAddToShopping(item)} className="block mt-1 text-[10px] font-black text-[var(--c-primary)] bg-rose-100 px-3 py-1 rounded-lg hover:bg-rose-200 pointer-events-auto transition-colors">+ הוסף לקניות</button>
           )}
         </div>
         <div className="flex items-center gap-2" dir="ltr">
-          <button onClick={onMinus} className="w-9 h-9 rounded-full bg-rose-100 text-rose-600 font-black pointer-events-auto shadow-sm hover:bg-rose-200 transition-colors active:scale-90">-</button>
+          <button onClick={onMinus} className="w-9 h-9 rounded-full bg-rose-100 text-[var(--c-primary)] font-black pointer-events-auto shadow-sm hover:bg-rose-200 transition-colors active:scale-90">-</button>
           <div className="relative flex items-center justify-center min-w-[36px]">
             <select value={Math.floor(item.quantity || 0)} onChange={(e) => updateExactQuantity(item, Number(e.target.value))} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer pointer-events-auto">
               {[...Array(21).keys()].map(num => <option key={num} value={num}>{num}</option>)}
             </select>
-            <span className={`text-xl font-black pointer-events-none ${isLow ? 'text-rose-600' : 'text-slate-700'}`}>{item.quantity || 0}</span>
+            <span className={`text-xl font-black pointer-events-none ${isLow ? 'text-[var(--c-primary)]' : 'text-slate-700'}`}>{item.quantity || 0}</span>
           </div>
           <button onClick={onPlus} className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-600 font-black pointer-events-auto shadow-sm hover:bg-emerald-200 transition-colors active:scale-90">+</button>
           <button onClick={() => onDelete(item)} className="w-9 h-9 rounded-full bg-slate-100 text-slate-400 hover:bg-red-100 hover:text-red-600 font-black text-xs pointer-events-auto shadow-sm transition-colors active:scale-90" title="מחק לצמיתות">🗑️</button>
@@ -1960,16 +2267,16 @@ function InventoryCard({ item, editingId, editNameValue, setEditingId, setEditNa
         {editingCatItemId === item.id ? (
           <div className="flex items-center gap-1 flex-wrap flex-1">
             {categories?.filter((c: string) => c !== 'uncertain' && c !== 'null').map((cat: string) => (
-              <button key={cat} type="button" onClick={() => saveEditedCategory(item.id, 'inventory_items', cat)} className="bg-teal-50 text-teal-700 px-2 py-0.5 rounded-lg text-[10px] font-bold hover:bg-teal-500 hover:text-white transition-all pointer-events-auto">{cat}</button>
+              <button key={cat} type="button" onClick={() => saveEditedCategory(item.id, 'inventory_items', cat)} className="bg-teal-50 text-[var(--c-head)] px-2 py-0.5 rounded-lg text-[10px] font-bold hover:bg-[var(--c-primary)] hover:text-white transition-all pointer-events-auto">{cat}</button>
             ))}
             <input value={editCatValue} onChange={(e) => setEditCatValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedCategory(item.id, 'inventory_items')} placeholder="קטגוריה חדשה..." className="border-b border-teal-300 bg-transparent px-1 outline-none text-[10px] font-bold w-[90px] pointer-events-auto" autoFocus />
             <button type="button" onClick={() => saveEditedCategory(item.id, 'inventory_items')} className="text-[10px] font-black text-green-600 pointer-events-auto">✅</button>
             <button type="button" onClick={() => setEditingCatItemId(null)} className="text-[10px] font-black text-slate-400 pointer-events-auto">✕</button>
           </div>
         ) : (
-          <button type="button" onClick={() => { setEditingCatItemId(item.id); setEditCatValue(item.category || 'כללי'); }} className="bg-slate-50 text-slate-500 hover:text-teal-600 hover:bg-teal-50 px-2 py-1 rounded-full pointer-events-auto transition-colors underline decoration-dashed decoration-slate-300">📁 {item.category || 'כללי'}</button>
+          <button type="button" onClick={() => { setEditingCatItemId(item.id); setEditCatValue(item.category || 'כללי'); }} className="bg-[var(--c-soft)] text-slate-500 hover:text-[var(--c-primary)] hover:bg-teal-50 px-2 py-1 rounded-full pointer-events-auto transition-colors underline decoration-dashed decoration-slate-300">📁 {item.category || 'כללי'}</button>
         )}
-        <button type="button" onClick={() => onUpdateLocation(otherLocation)} className="bg-slate-50 text-slate-500 hover:text-teal-600 hover:bg-teal-50 px-2 py-1 rounded-full pointer-events-auto transition-colors" title={`עבור ל${otherLocation}`}>{locEmoji} {item.location || 'מזווה'}</button>
+        <button type="button" onClick={() => onUpdateLocation(otherLocation)} className="bg-[var(--c-soft)] text-slate-500 hover:text-[var(--c-primary)] hover:bg-teal-50 px-2 py-1 rounded-full pointer-events-auto transition-colors" title={`עבור ל${otherLocation}`}>{locEmoji} {item.location || 'מזווה'}</button>
       </div>
     </div>
   );
@@ -1982,21 +2289,21 @@ function ShoppingCard({ item, editingId, editNameValue, setEditingId, setEditNam
     <div className={`flex flex-col gap-3 bg-white p-4 rounded-[1.5rem] shadow-sm border transition-colors ${highlight ? 'border-amber-400 ring-2 ring-amber-200 bg-amber-50/30' : 'border-rose-50 hover:border-rose-100'}`}>
       <div className="flex items-center gap-2 flex-wrap">
         <button onClick={() => onDelete(item)} className="bg-slate-100 text-slate-500 hover:bg-red-100 hover:text-red-600 px-3 py-1.5 rounded-xl text-xs font-black shadow-sm pointer-events-auto transition-colors">🗑️ מחק</button>
-        <button onClick={() => setShowQtyDialog(!showQtyDialog)} className="bg-teal-100 text-teal-700 hover:bg-teal-200 px-3 py-1.5 rounded-xl text-xs font-black shadow-sm pointer-events-auto transition-colors">📦 הוסף למלאי</button>
+        <button onClick={() => setShowQtyDialog(!showQtyDialog)} className="bg-teal-100 text-[var(--c-head)] hover:bg-teal-200 px-3 py-1.5 rounded-xl text-xs font-black shadow-sm pointer-events-auto transition-colors">📦 הוסף למלאי</button>
         <div className="flex flex-col gap-0.5 flex-1 text-right">
           {editingId === item.id ? (
             <div className="flex items-center gap-2">
-              <input autoFocus value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedName(item.id, 'shopping_list')} className="border-b-2 border-rose-500 bg-rose-50 px-2 py-1 outline-none font-bold text-lg w-[140px] pointer-events-auto" />
+              <input autoFocus value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedName(item.id, 'shopping_list')} className="border-b-2 border-[var(--c-primary)] bg-rose-50 px-2 py-1 outline-none font-bold text-lg w-[140px] pointer-events-auto" />
               <button onClick={() => saveEditedName(item.id, 'shopping_list')} className="bg-green-100 text-green-700 p-2 rounded-lg pointer-events-auto shadow-sm">✅</button>
             </div>
           ) : (
-            <span onClick={() => {setEditingId(item.id); setEditNameValue(item.item_name || 'פריט לא ידוע');}} className="font-bold text-slate-800 text-lg cursor-pointer hover:text-rose-600 hover:underline decoration-dashed decoration-slate-300 pointer-events-auto transition-colors">{item.item_name || 'פריט לא ידוע'}</span>
+            <span onClick={() => {setEditingId(item.id); setEditNameValue(item.item_name || 'פריט לא ידוע');}} className="font-bold text-slate-800 text-lg cursor-pointer hover:text-[var(--c-primary)] hover:underline decoration-dashed decoration-slate-300 pointer-events-auto transition-colors">{item.item_name || 'פריט לא ידוע'}</span>
           )}
           {editingCatItemId === item.id ? (
             <div className="flex items-center gap-1 flex-wrap">
               {categories?.filter((c: string) => c !== 'uncertain' && c !== 'null').map((cat: string) => (
                 <button key={cat} onClick={async () => { await saveEditedCategory(item.id, 'shopping_list', cat); }}
-                  className="bg-rose-50 text-rose-600 px-2 py-0.5 rounded-lg text-[10px] font-bold hover:bg-rose-500 hover:text-white transition-all pointer-events-auto">{cat}</button>
+                  className="bg-rose-50 text-[var(--c-primary)] px-2 py-0.5 rounded-lg text-[10px] font-bold hover:bg-[var(--c-primary-soft)] hover:text-white transition-all pointer-events-auto">{cat}</button>
               ))}
               <input value={editCatValue} onChange={(e) => setEditCatValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedCategory(item.id, 'shopping_list')} placeholder="קטגוריה..." className="border-b border-rose-300 bg-transparent px-1 outline-none text-[10px] font-bold w-[80px] pointer-events-auto" autoFocus />
               <button onClick={() => saveEditedCategory(item.id, 'shopping_list')} className="text-[10px] font-black text-green-600 pointer-events-auto">✅</button>
@@ -2010,10 +2317,10 @@ function ShoppingCard({ item, editingId, editNameValue, setEditingId, setEditNam
       {showQtyDialog && (
         <div className="flex items-center gap-2 bg-teal-50 p-3 rounded-xl border border-teal-200">
           <span className="text-xs font-bold text-teal-900 flex-1">כמות להוספה למלאי:</span>
-          <button onClick={() => setQty(Math.max(1, qty - 1))} className="w-8 h-8 rounded-full bg-white text-teal-600 font-black pointer-events-auto shadow-sm">-</button>
+          <button onClick={() => setQty(Math.max(1, qty - 1))} className="w-8 h-8 rounded-full bg-white text-[var(--c-primary)] font-black pointer-events-auto shadow-sm">-</button>
           <span className="text-lg font-black text-teal-800 min-w-[28px] text-center">{qty}</span>
-          <button onClick={() => setQty(qty + 1)} className="w-8 h-8 rounded-full bg-white text-teal-600 font-black pointer-events-auto shadow-sm">+</button>
-          <button onClick={() => { onMoveToInventory(item, qty); setShowQtyDialog(false); setQty(1); }} className="bg-teal-600 text-white px-3 py-1.5 rounded-xl text-xs font-black pointer-events-auto">אישור ✓</button>
+          <button onClick={() => setQty(qty + 1)} className="w-8 h-8 rounded-full bg-white text-[var(--c-primary)] font-black pointer-events-auto shadow-sm">+</button>
+          <button onClick={() => { onMoveToInventory(item, qty); setShowQtyDialog(false); setQty(1); }} className="bg-[var(--c-primary)] text-white px-3 py-1.5 rounded-xl text-xs font-black pointer-events-auto">אישור ✓</button>
         </div>
       )}
     </div>

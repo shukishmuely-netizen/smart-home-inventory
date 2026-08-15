@@ -1,9 +1,13 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Heebo, Frank_Ruhl_Libre, Assistant, Rubik, Varela_Round } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
-const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
+// Five selectable Hebrew fonts (settings screen switches --font-current).
+const heebo = Heebo({ variable: "--font-heebo", subsets: ["hebrew", "latin"] });
+const frankRuhl = Frank_Ruhl_Libre({ variable: "--font-frank", subsets: ["hebrew", "latin"] });
+const assistant = Assistant({ variable: "--font-assistant", subsets: ["hebrew", "latin"] });
+const rubik = Rubik({ variable: "--font-rubik", subsets: ["hebrew", "latin"] });
+const varela = Varela_Round({ variable: "--font-varela", weight: "400", subsets: ["hebrew", "latin"] });
 
 export const metadata: Metadata = {
   title: "הבית של ניאו",
@@ -24,7 +28,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="he" dir="rtl">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      <body className={`${heebo.variable} ${frankRuhl.variable} ${assistant.variable} ${rubik.variable} ${varela.variable} antialiased`}>
         {children}
       </body>
     </html>
