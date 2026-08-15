@@ -55,18 +55,19 @@ UNION ALL SELECT
 
 
 -- ============================================================
--- אילו רשימות יעודיות קיימות (וכמה פריטים בכל אחת)
+-- אילו רשימות יעודיות קיימות, כמה פריטים ובכמה קטגוריות
 --
--- להריץ רק אחרי שטבלת shopping_templates קיימת.
--- שימושי לפני הרצת מיגרציה עם זריעה, כדי לא ליצור כפילות.
--- להרצה: לסמן את הבלוק שמתחת, להסיר את הסימון של ההערה, וללחוץ Run.
+-- דורש שטבלת shopping_templates קיימת (המיגרציה הראשונה).
+-- שימושי גם לפני הרצת מיגרציה עם זריעה, כדי לא ליצור כפילות:
+-- אם שם מופיע כאן פעמיים - יש כפילות שכדאי למחוק מהאפליקציה.
 -- ============================================================
 
--- SELECT
---   t.name      AS "שם הרשימה",
---   COUNT(i.id) AS "מספר פריטים",
---   t.id        AS "מזהה"
--- FROM shopping_templates t
--- LEFT JOIN shopping_template_items i ON i.template_id = t.id
--- GROUP BY t.id, t.name
--- ORDER BY t.name;
+SELECT
+  t.name                                    AS "שם הרשימה",
+  COUNT(i.id)                               AS "מספר פריטים",
+  COUNT(DISTINCT i.category)                AS "מספר קטגוריות",
+  t.created_at::date                        AS "נוצרה"
+FROM shopping_templates t
+LEFT JOIN shopping_template_items i ON i.template_id = t.id
+GROUP BY t.id, t.name, t.created_at
+ORDER BY t.created_at;
