@@ -90,7 +90,7 @@ export default function HomePage() {
   const [duplicateShoppingAlerts, setDuplicateShoppingAlerts] = useState<string[]>([]);
   const [wordChoiceTasks, setWordChoiceTasks] = useState<WordChoiceTask[]>([]);
   const [equipmentItems, setEquipmentItems] = useState<EquipmentItem[]>([]);
-  const [equipListType, setEquipListType] = useState<string>('חד"כ');
+  const [equipListType, setEquipListType] = useState<string>('חו"ל');
   const EQUIP_CATEGORIES = ['ניאו', 'חשמל', 'בגדים', 'תרופות', 'נעליים', 'ציוד נוסף'];
 
   const [newTask, setNewTask] = useState<Task>({
@@ -118,6 +118,7 @@ export default function HomePage() {
   const [categorizeNewCats, setCategorizeNewCats] = useState<Record<string, string>>({});
   const [shoppingTemplates, setShoppingTemplates] = useState<ShoppingTemplate[]>([]);
   const [templatesError, setTemplatesError] = useState<string | null>(null);
+  const [showTemplatesPanel, setShowTemplatesPanel] = useState(false);
   const [addedSummary, setAddedSummary] = useState<{ name: string; category: string }[]>([]);
   const [showCreateTemplate, setShowCreateTemplate] = useState(false);
   const [newTemplateName, setNewTemplateName] = useState('');
@@ -1112,11 +1113,12 @@ export default function HomePage() {
   const headerGradient = 'from-[var(--c-grad-a)] via-[var(--c-grad-b)] to-[var(--c-grad-c)]';
 
   // Tab list is driven by the DB, so a new list_type shows up on its own.
-  const DEFAULT_EQUIP_LISTS = ['חו"ל', 'חד"כ', 'סופ"ש'];
+  const DEFAULT_EQUIP_LISTS = ['חו"ל', 'סופ"ש', 'פסטיבלים וקמפינג'];
+  const HIDDEN_EQUIP_LISTS = ['חד"כ'];
   const equipListTypes = Array.from(new Set([
     ...DEFAULT_EQUIP_LISTS,
     ...equipmentItems.map(i => i.list_type).filter(Boolean),
-  ]));
+  ])).filter(lt => !HIDDEN_EQUIP_LISTS.includes(lt));
   const currentEquipItems = equipmentItems.filter(i => i.list_type === equipListType);
   const unpackedEquip = currentEquipItems.filter(i => !i.is_packed);
   const packedEquip = currentEquipItems.filter(i => i.is_packed);
@@ -1268,7 +1270,7 @@ export default function HomePage() {
                <span className="text-4xl">📌</span>
             </button>
             <button onClick={() => changeView('TEMPLATES')} className="p-6 bg-white rounded-[2rem] shadow-lg border-b-8 border-[var(--c-acc3)] flex items-center justify-between active:scale-95 transition-all">
-               <div className="text-right"><span className="block text-2xl font-black">📝 רשימות</span><span className="text-slate-400 text-sm">{equipmentItems.filter(i => !i.is_packed).length} לא נארזו · {shoppingTemplates.length} רשימות קניות</span></div>
+               <div className="text-right"><span className="block text-2xl font-black">📝 רשימות</span><span className="text-slate-400 text-sm">{equipmentItems.filter(i => !i.is_packed && !HIDDEN_EQUIP_LISTS.includes(i.list_type)).length} לא נארזו</span></div>
                <span className="text-4xl">🎒</span>
             </button>
           </div>
@@ -1971,12 +1973,23 @@ export default function HomePage() {
           </div>
         )}
 
-        {activeView === 'TEMPLATES' && (
-          <div className="space-y-4 mt-10 pt-8 border-t-2 border-[var(--c-line)]">
-            <h2 className="font-black text-xl text-[var(--c-head)] flex items-center gap-2">
-              🛒 רשימות קניות
-              <span className="text-[11px] font-bold text-slate-400">מוסיפות פריטים לקניות</span>
-            </h2>
+        {activeView === 'SHOPPING' && (
+          <div className="mb-6">
+            <button
+              type="button"
+              onClick={() => setShowTemplatesPanel(v => !v)}
+              className="w-full bg-white border border-[var(--c-line)] rounded-2xl p-4 flex items-center justify-between shadow-sm pointer-events-auto hover:bg-[var(--c-soft)] transition-colors"
+            >
+              <span className="font-black text-[var(--c-head)]">📋 רשימות שמורות</span>
+              <span className="text-xs font-bold text-slate-400">
+                {shoppingTemplates.length} רשימות {showTemplatesPanel ? '▲' : '▼'}
+              </span>
+            </button>
+          </div>
+        )}
+
+        {activeView === 'SHOPPING' && showTemplatesPanel && (
+          <div className="space-y-4 mb-6">
             <div className="bg-amber-50 border-2 border-amber-200 p-4 rounded-2xl">
               <p className="text-sm font-bold text-amber-900">
                 לחיצה על רשימה תוסיף את כל הפריטים שבה לרשימת הקניות. אפשר לערוך, ליצור חדשות, או למחוק.
