@@ -184,7 +184,7 @@ export default function HomePage() {
   const [quickAddRows, setQuickAddRows] = useState([emptyQuickAddRow(), emptyQuickAddRow()]);
   const [quickAddSubmitting, setQuickAddSubmitting] = useState(false);
   const [suggestRow, setSuggestRow] = useState<number | null>(null);
-  const [suggestIdx, setSuggestIdx] = useState(0);
+  const [suggestIdx, setSuggestIdx] = useState(-1);   // -1 = nothing chosen yet
   const [catGuessingRow, setCatGuessingRow] = useState<number | null>(null);
 
   const [showCategorize, setShowCategorize] = useState(false);
@@ -211,6 +211,7 @@ export default function HomePage() {
   const [editCatValue, setEditCatValue] = useState('');
 
   const noteTimer = useRef<number | null>(null);
+  const focusRefs = useRef<Record<string, HTMLElement | null>>({});
   const fetchSeq = useRef(0);
   const celebTimers = useRef<number[]>([]);
 
@@ -296,6 +297,20 @@ export default function HomePage() {
     } catch { /* private mode */ }
   }, []);
 
+  // Keep the browser/status-bar colour on the active theme, so the dark theme
+  // does not sit under a light iOS status bar.
+  useEffect(() => {
+    const t = THEME_OPTIONS.find(o => o.key === appTheme);
+    if (!t) return;
+    let tag = document.querySelector('meta[name="theme-color"]');
+    if (!tag) {
+      tag = document.createElement('meta');
+      tag.setAttribute('name', 'theme-color');
+      document.head.appendChild(tag);
+    }
+    tag.setAttribute('content', t.bg);
+  }, [appTheme]);
+
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
     onScroll();
@@ -309,6 +324,13 @@ export default function HomePage() {
     const t = window.setTimeout(() => setAddedSummary([]), 10000);
     return () => window.clearTimeout(t);
   }, [addedSummary]);
+
+  // Focus the field a chip pointed at — once per open/target, not per render.
+  useEffect(() => {
+    if (!editingTaskId) return;
+    if (editTaskFocus === 'all' || editTaskFocus === 'title') return;
+    focusRefs.current[editTaskFocus]?.focus();
+  }, [editingTaskId, editTaskFocus]);
 
   useEffect(() => () => {
     if (noteTimer.current) window.clearTimeout(noteTimer.current);
@@ -396,7 +418,9 @@ export default function HomePage() {
   const ensureCategory = async (cat: string) => {
     if (!cat || cat === 'כללי' || categories.includes(cat)) return;
     const { error } = await supabase.from('category_order').insert([{ category_name: cat, sort_order: 99 }]);
-    if (!error) setCategories(prev => Array.from(new Set([...prev, cat])));
+    // 23505 just means another path already created it — anything else is real.
+    if (error && (error as any).code !== '23505') { failed(error, `יצירת הקטגוריה "${cat}"`); return; }
+    setCategories(prev => Array.from(new Set([...prev, cat])));
   };
 
   const startRenameCategory = (cat: string) => { setEditingCategoryName(cat); setCategoryNameValue(cat); };
@@ -793,13 +817,12 @@ export default function HomePage() {
         const matches = working.filter(i => (i.item_name || '').toLowerCase().includes(clean));
         for (const m of matches) {
           const { error } = await supabase.from('inventory_items').update({ category: item.moveToCategory }).eq('id', m.id);
-          if (!error) moved++;
+          if (error) failed(error, `העברת "${m.item_name}"`); else moved++;
         }
         if (!matches.length) notFound.push(name);
       } else if (isRemoval) {
-        const matches = working.filter(i => (i.item_name || '').toLowerCase().includes(clean));
-        const exact = matches.find(i => (i.item_name || '').toLowerCase() === clean);
-        if (matches.length === 1 || (exact && matches.length === 1)) {
+        const matches = working.filter(i => i.id && (i.item_name || '').toLowerCase().includes(clean));
+        if (matches.length === 1) {
           await executeRemoval(matches[0], item.quantity, item.removeAll);
           const idx = working.findIndex(w => w.id === matches[0].id);
           if (idx >= 0) working[idx].quantity = item.removeAll ? 0 : Math.max(0, (working[idx].quantity || 0) + item.quantity);
@@ -817,7 +840,9 @@ export default function HomePage() {
           saved++;
           const idx = working.findIndex(w => normKey(w.item_name || '') === normKey(name));
           if (idx >= 0) working[idx].quantity = (working[idx].quantity || 0) + (item.quantity || 1);
-          else working.push({ id: `tmp-${name}`, item_name: name, quantity: item.quantity || 1, category: item.category, location: item.location || 'מזווה' });
+          // No synthetic id: a row created in this pass has no real key yet, and
+          // a later removal in the same submission must not target a fake one.
+          else working.push({ item_name: name, quantity: item.quantity || 1, category: item.category, location: item.location || 'מזווה' } as Item);
         }
       }
     }
@@ -1040,8 +1065,9 @@ export default function HomePage() {
     setEquipmentItems(prev => prev.map(i => (i.list_type === listType ? { ...i, is_packed: false } : i)));
     const { error } = await supabase.from('equipment_items').update({ is_packed: false }).eq('list_type', listType);
     if (failed(error, 'איפוס הרשימה')) { await fetchData(); return; }
-    await supabase.from('equipment_sessions')
+    const { error: sessErr } = await supabase.from('equipment_sessions')
       .upsert({ list_type: listType, last_pack_date: localToday(), household_id: HOUSEHOLD }, { onConflict: 'list_type,household_id' });
+    failed(sessErr, 'שמירת תאריך האריזה');
   };
 
   useEffect(() => {
@@ -1061,8 +1087,9 @@ export default function HomePage() {
     setEquipmentItems(prev => prev.map(i => (i.id === item.id ? { ...i, is_packed: next } : i)));
     const { error } = await supabase.from('equipment_items').update({ is_packed: next }).eq('id', item.id);
     if (failed(error, 'הסימון')) { await fetchData(); return; }
-    await supabase.from('equipment_sessions')
+    const { error: sessErr } = await supabase.from('equipment_sessions')
       .upsert({ list_type: item.list_type, last_pack_date: localToday(), household_id: HOUSEHOLD }, { onConflict: 'list_type,household_id' });
+    failed(sessErr, 'שמירת תאריך האריזה');
   };
 
   const handleEquipmentUpdate = async (e: React.FormEvent) => {
@@ -1088,7 +1115,7 @@ export default function HomePage() {
         for (const m of matches) {
           setEquipmentItems(prev => prev.filter(i => i.id !== m.id));
           const { error } = await supabase.from('equipment_items').delete().eq('id', m.id);
-          if (!error) removedCount++;
+          if (error) { failed(error, `הסרת "${m.item_name}"`); await fetchData(); } else removedCount++;
         }
         if (!matches.length) notFound.push(name);
       } else {
@@ -1298,8 +1325,16 @@ export default function HomePage() {
             <Icon name="refresh" />
           </button>
           <div className="relative">
+            {isMenuOpen && (
+              <button
+                className="fixed inset-0 z-[10]"
+                onClick={() => setIsMenuOpen(false)}
+                aria-label="סגור תפריט"
+                tabIndex={-1}
+              />
+            )}
             <button
-              className="btn-icon btn-icon-filled"
+              className="btn-icon btn-icon-filled relative z-[20]"
               onClick={() => setIsMenuOpen(v => !v)}
               aria-label="תפריט"
               aria-haspopup="menu"
@@ -1308,7 +1343,7 @@ export default function HomePage() {
               <Icon name="list" />
             </button>
             {isMenuOpen && (
-              <div className="sheet pop-in absolute left-0 top-12 w-52 z-[1001] flex flex-col" role="menu">
+              <div className="sheet pop-in absolute left-0 top-12 w-52 z-[20] flex flex-col" role="menu">
                 {([
                   ['INVENTORY', 'מלאי', 'box'], ['SHOPPING', 'קניות', 'cart'],
                   ['TEMPLATES', 'רשימות', 'suitcase'], ['TASKS', 'משימות', 'pin'],
@@ -1331,8 +1366,6 @@ export default function HomePage() {
         </div>
         {scrolled && <div className="appbar-accent" />}
       </header>
-
-      {isMenuOpen && <button className="fixed inset-0 z-[999]" onClick={() => setIsMenuOpen(false)} aria-label="סגור תפריט" tabIndex={-1} />}
 
       <div key={activeView} className="max-w-2xl mx-auto px-5 relative z-10">
 
@@ -1610,18 +1643,20 @@ export default function HomePage() {
                           role="combobox"
                           aria-expanded={matches.length > 0}
                           aria-autocomplete="list"
-                          onChange={e => { updateQuickAddRow(i, { name: e.target.value }); setSuggestIdx(0); }}
-                          onFocus={() => { setSuggestRow(i); setSuggestIdx(0); }}
+                          onChange={e => { updateQuickAddRow(i, { name: e.target.value }); setSuggestIdx(-1); }}
+                          onFocus={() => { setSuggestRow(i); setSuggestIdx(-1); }}
                           onBlur={() => { window.setTimeout(() => setSuggestRow(prev => (prev === i ? null : prev)), 150); autoFillRowCategory(i, row.name); }}
                           onKeyDown={e => {
                             if (!matches.length) return;
                             if (e.key === 'ArrowDown') { e.preventDefault(); setSuggestIdx(x => Math.min(x + 1, matches.length - 1)); }
-                            else if (e.key === 'ArrowUp') { e.preventDefault(); setSuggestIdx(x => Math.max(x - 1, 0)); }
-                            else if (e.key === 'Enter' && suggestRow === i) {
+                            else if (e.key === 'ArrowUp') { e.preventDefault(); setSuggestIdx(x => Math.max(x - 1, -1)); }
+                            else if (e.key === 'Enter' && suggestIdx >= 0) {
+                              // Only steal Enter when the user actually picked
+                              // a suggestion; otherwise let the form submit.
                               e.preventDefault();
                               const pick = matches[suggestIdx];
-                              if (pick) { updateQuickAddRow(i, { name: pick }); setSuggestRow(null); autoFillRowCategory(i, pick); }
-                            } else if (e.key === 'Escape') setSuggestRow(null);
+                              if (pick) { updateQuickAddRow(i, { name: pick }); setSuggestRow(null); setSuggestIdx(-1); autoFillRowCategory(i, pick); }
+                            } else if (e.key === 'Escape') { setSuggestRow(null); setSuggestIdx(-1); }
                           }}
                           placeholder={i === 0 ? 'פריט לקנייה' : 'פריט נוסף'}
                         />
@@ -1770,7 +1805,7 @@ export default function HomePage() {
 
             {showCategorize && (() => {
               // Anything the app filed on its own, plus anything sitting in כללי.
-              const pending = filteredShoppingList.filter(s => s.category_auto === true || !s.category || s.category === 'כללי');
+              const pending = safeShoppingList.filter(s => s.category_auto === true || !s.category || s.category === 'כללי');
               return (
                 <div className="card mb-4 slide-up">
                   <div className="flex items-center gap-2 mb-3">
@@ -1926,7 +1961,7 @@ export default function HomePage() {
                             className="field flex-1"
                             value={categoryAddInput}
                             onChange={e => setCategoryAddInput(e.target.value)}
-                            placeholder="תפוזים אפרסק, קישוא צהוב"
+                            placeholder="תפוזים אפרסק בננה — או עם פסיקים: קישוא צהוב, שמן זית"
                             aria-label={`הוסף פריטים ל${cat}`}
                           />
                           <button type="submit" className="btn btn-primary btn-sm" disabled={categoryAddLoading || !categoryAddInput.trim()}>
@@ -2017,17 +2052,17 @@ export default function HomePage() {
                   return (
                     <div
                       key={task.id}
+                      onClick={() => !isPoofing && !isEditing && startEditTask(task, 'all')}
                       className={`card spine ${isPoofing ? 'task-poof' : ''}`}
                       style={{
+                        cursor: isEditing ? 'default' : 'pointer',
                         ['--spine-c' as any]: urgencyTone(task.urgency),
                         opacity: blockedBy ? .62 : 1,
                         boxShadow: isEditing ? 'var(--sh-focus)' : undefined,
                       }}
                     >
                       <div className="flex items-start gap-2">
-                        <button className="flex-1 text-right tap-text" onClick={() => !isPoofing && startEditTask(task, 'all')}>
-                          <h3 className="t-title">{task.title}</h3>
-                        </button>
+                        <h3 className="t-title flex-1 tap-text">{task.title}</h3>
                         <button onClick={e => { stop(e); deleteTask(task); }} className="btn-icon btn-icon-danger" aria-label={`מחק את ${task.title}`}>
                           <Icon name="trash" size={17} />
                         </button>
@@ -2049,7 +2084,7 @@ export default function HomePage() {
                       </div>
 
                       {isEditing && draft && (
-                        <div className="mt-4 pt-4 border-t border-[var(--border-subtle)] grid gap-3">
+                        <div onClick={stop} className="mt-4 pt-4 border-t border-[var(--border-subtle)] grid gap-3">
                           <input
                             className="field"
                             autoFocus={editTaskFocus === 'all' || editTaskFocus === 'title'}
@@ -2061,7 +2096,7 @@ export default function HomePage() {
                           <div className="grid grid-cols-2 gap-3">
                             <select
                               className="field"
-                              ref={el => { if (el && editTaskFocus === 'urgency') el.focus(); }}
+                              ref={el => { focusRefs.current['urgency'] = el; }}
                               value={draft.urgency}
                               onChange={e => setEditTaskDraft({ ...draft, urgency: e.target.value })}
                               aria-label="דחיפות"
@@ -2070,7 +2105,7 @@ export default function HomePage() {
                             </select>
                             <select
                               className="field"
-                              ref={el => { if (el && editTaskFocus === 'assignee') el.focus(); }}
+                              ref={el => { focusRefs.current['assignee'] = el; }}
                               value={draft.assignee}
                               onChange={e => setEditTaskDraft({ ...draft, assignee: e.target.value })}
                               aria-label="באחריות"
@@ -2081,16 +2116,17 @@ export default function HomePage() {
                           <input
                             type="date"
                             className="field field-center"
-                            ref={el => { if (el && editTaskFocus === 'date') el.focus(); }}
+                            ref={el => { focusRefs.current['date'] = el; }}
                             value={draft.target_date}
                             onChange={e => setEditTaskDraft({ ...draft, target_date: e.target.value })}
                             aria-label="תאריך יעד"
                           />
                           <div>
-                            <label className="field-label">תלות במשימה</label>
+                            <label className="field-label" htmlFor={`et-dep-${task.id}`}>תלות במשימה</label>
                             <select
+                              id={`et-dep-${task.id}`}
                               className="field"
-                              ref={el => { if (el && editTaskFocus === 'depends') el.focus(); }}
+                              ref={el => { focusRefs.current['depends'] = el; }}
                               value={draft.depends_on_task_id || ''}
                               onChange={e => setEditTaskDraft({ ...draft, depends_on_task_id: e.target.value || null })}
                             >
@@ -2105,7 +2141,7 @@ export default function HomePage() {
                         </div>
                       )}
 
-                      <div className="seg mt-4" role="group" aria-label="סטטוס המשימה">
+                      <div onClick={stop} className="seg mt-4" role="group" aria-label="סטטוס המשימה">
                         {([['לא התחלתי', isPlural ? 'לא התחלנו' : 'לא התחלתי'], ['בתהליך', 'בתהליך'], ['סיימתי', isPlural ? 'סיימנו' : 'סיימתי']] as [string, string][]).map(([val, label]) => (
                           <button
                             key={val}
@@ -2183,7 +2219,7 @@ export default function HomePage() {
                             aria-checked={false}
                             aria-label={`סמן ${item.item_name} כנארז`}
                             className="flex-none grid place-items-center"
-                            style={{ width: 30, height: 30, borderRadius: 9, border: '2px solid var(--border-strong)', background: 'var(--s-raised)' }}
+                            style={{ width: 30, height: 30, borderRadius: 'var(--r-sm)', border: '2px solid var(--border-strong)', background: 'var(--s-raised)' }}
                           />
                           {editingId === item.id ? (
                             <>
@@ -2231,7 +2267,7 @@ export default function HomePage() {
                         aria-checked
                         aria-label={`בטל סימון של ${item.item_name}`}
                         className="flex-none grid place-items-center"
-                        style={{ width: 30, height: 30, borderRadius: 9, background: 'var(--st-ok)', color: '#fff' }}
+                        style={{ width: 30, height: 30, borderRadius: 'var(--r-sm)', background: 'var(--st-ok)', color: 'var(--st-on)' }}
                       >
                         <Icon name="check" size={17} />
                       </button>
@@ -2433,8 +2469,8 @@ function CompletedTaskCard({ task, onRestore, onDelete }: any) {
       {open && (
         <div className="mt-3 pt-3 border-t border-[var(--border-subtle)] flex gap-2 items-end">
           <div className="flex-1">
-            <label className="field-label">תאריך יעד חדש</label>
-            <input type="date" className="field field-center" value={newDate} onChange={e => setNewDate(e.target.value)} />
+            <label className="field-label" htmlFor={`restore-${task.id}`}>תאריך יעד חדש</label>
+            <input id={`restore-${task.id}`} type="date" className="field field-center" value={newDate} onChange={e => setNewDate(e.target.value)} />
           </div>
           <button onClick={() => { onRestore(task.id, newDate); setOpen(false); }} className="btn btn-primary btn-sm">שחזר</button>
         </div>
@@ -2645,7 +2681,7 @@ function ShoppingCard({
         className="absolute inset-0 flex items-center px-5"
         style={{
           background: armed ? 'var(--st-danger)' : 'var(--st-danger-bg)',
-          color: armed ? '#fff' : 'var(--st-danger)',
+          color: armed ? 'var(--st-on)' : 'var(--st-danger)',
           opacity: dragX > 0 ? 1 : 0,
           transition: 'background-color var(--dur) var(--ease-out)',
         }}

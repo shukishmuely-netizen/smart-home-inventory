@@ -61,6 +61,7 @@
   --st-warn:    #8a5a09; --st-warn-bg:   #fdf3e0; --st-warn-border:   #f0dcb4;
   --st-danger:  #b3261e; --st-danger-bg: #fdecec; --st-danger-border: #f5cdcb;
   --st-info:    #2b5ca8; --st-info-bg:   #eaf1fd; --st-info-border:   #c7d9f6;
+  --st-on: #ffffff;   /* ink painted on a solid --st-* fill */
 
   --font-current: var(--font-heebo);
   --font-head: var(--font-current);
@@ -94,7 +95,7 @@ main[data-theme="lyra"] {
   --sh-1: 0 1px 0 hsl(24 20% 60% / .18);
   --sh-2: 0 1px 0 hsl(24 20% 60% / .18), 0 4px 10px -6px hsl(24 20% 40% / .12);
   --sh-3: 0 8px 24px -12px hsl(24 20% 35% / .22);
-  --sh-edge: none;
+  --sh-edge: 0 0 transparent;
 }
 
 /* =========== אוקיינוס — glassy, soft, generous radii =========== */
@@ -142,9 +143,10 @@ main[data-theme="mono"] {
   --st-warn: #18181b;   --st-warn-bg: #f1f1f2;   --st-warn-border: #b8b8bd;
   --st-danger: #18181b; --st-danger-bg: #e9e9ea; --st-danger-border: #9b9ba1;
   --st-info: #18181b;   --st-info-bg: #f1f1f2;   --st-info-border: #d4d4d8;
-  --sh-1: none; --sh-2: none;
+  --st-on: #ffffff;
+  --sh-1: 0 0 transparent; --sh-2: 0 0 transparent;
   --sh-3: 0 8px 24px -12px rgb(0 0 0 / .18);
-  --sh-edge: none;
+  --sh-edge: 0 0 transparent;
   --head-tracking: -0.01em;
 }
 
@@ -163,6 +165,7 @@ main[data-theme="midnight"] {
   --st-warn: #f2c879;   --st-warn-bg: #322718;   --st-warn-border: #574326;
   --st-danger: #f79b96; --st-danger-bg: #341d1e;  --st-danger-border: #5e3231;
   --st-info: #8fbdf5;   --st-info-bg: #1b2740;   --st-info-border: #2f4468;
+  --st-on: #14131c;
   --sh-1: 0 1px 2px -1px rgb(0 0 0 / .5);
   --sh-2: 0 2px 6px -2px rgb(0 0 0 / .5), 0 10px 20px -8px rgb(0 0 0 / .4);
   --sh-3: 0 14px 34px -12px rgb(0 0 0 / .6);
@@ -285,7 +288,6 @@ main[data-theme="midnight"] .grain { mix-blend-mode: screen; opacity: .035; }
 .btn-primary   { background: var(--c-primary-strong); color: var(--c-on-primary); box-shadow: var(--sh-1); }
 .btn-secondary { background: var(--s-raised); color: var(--t-primary); border-color: var(--border-strong); }
 .btn-ghost     { background: transparent; color: var(--c-head); min-height: 36px; padding: 0 var(--sp-3); }
-.btn-danger    { background: var(--st-danger-bg); color: var(--st-danger); border-color: var(--st-danger-border); }
 .btn-sm        { min-height: 36px; font-size: 13px; padding: 0 var(--sp-4); }
 .btn-xs        { min-height: 32px; font-size: 12.5px; padding: 0 var(--sp-3); border-radius: var(--r-sm); }
 
@@ -368,7 +370,6 @@ main[data-theme="midnight"] select.field {
 @media (hover: hover) { .chip-btn:hover { background: var(--c-primary-soft); color: var(--c-head); } }
 .chip-btn:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 .chip-editable { border-style: dashed; border-color: var(--border-strong); }
-.chip-active { background: var(--c-primary-strong); color: var(--c-on-primary); }
 
 /* ---- segmented control: one active treatment everywhere ---- */
 .seg {
@@ -407,15 +408,6 @@ main[data-theme="midnight"] select.field {
 .note-danger { --note-bg: var(--st-danger-bg); --note-border: var(--st-danger-border); --note-fg: var(--st-danger); }
 .note-info   { --note-bg: var(--st-info-bg);   --note-border: var(--st-info-border);   --note-fg: var(--st-info); }
 
-.pill {
-  display: inline-flex; align-items: center; gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-4);
-  border-radius: var(--r-full);
-  border: 1px solid var(--note-border, var(--border-subtle));
-  background: var(--note-bg, var(--s-sunken));
-  color: var(--note-fg, var(--t-primary));
-  font-size: 13px; font-weight: 600;
-}
 
 /* ---- stepper: one pill, tabular numerals, flash on change ---- */
 .stepper {
@@ -496,7 +488,7 @@ main[data-theme="midnight"] select.field {
   min-height: 52px; padding: var(--sp-1);
   border: none; background: transparent; cursor: pointer;
   border-radius: var(--r-md);
-  color: var(--t-tertiary); font-family: inherit; font-size: 10.5px; font-weight: 700;
+  color: var(--t-tertiary); font-family: inherit; font-size: 11.5px; font-weight: 700;
   transition: color var(--dur) var(--ease-out), background-color var(--dur) var(--ease-out);
 }
 .tabbar-item[aria-current="page"] { color: var(--c-primary-strong); background: var(--s-sunken); }
@@ -507,7 +499,7 @@ main[data-theme="midnight"] select.field {
   display: grid; place-items: center;
   border-radius: var(--r-full);
   background: var(--c-primary-strong); color: var(--c-on-primary);
-  font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums;
+  font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
 }
 
 /* =====================================================================
@@ -529,8 +521,6 @@ main[data-theme="midnight"] select.field {
 .slide-up { animation: slide-up var(--dur) var(--ease-out) both; }
 
 /* row leaving the list collapses its own height */
-@keyframes row-out { to { opacity: 0; transform: translateX(40%); max-height: 0; margin-block: 0; padding-block: 0; } }
-.row-out { animation: row-out var(--dur-slow) var(--ease-in) forwards; overflow: hidden; }
 
 /* =====================================================================
    task completion — real fireworks: launch, burst, comet streaks, sparks
@@ -605,7 +595,10 @@ main[data-theme="midnight"] select.field {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
   }
+  html { scroll-behavior: auto !important; }
 }
