@@ -1,151 +1,254 @@
 'use client';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 
-type Item = { id?: string; item_name: string; name?: string; quantity: number; category: string; location: string; needs_classification?: boolean; options?: string[]; removeAll?: boolean };
+const HOUSEHOLD = '92e1a987-99b7-41ec-93fb-ae2ada2bcf72';
+
+type Item = { id?: string; item_name: string; name?: string; quantity: number; category: string; location: string; updated_at?: string; needs_classification?: boolean; removeAll?: boolean };
 type Task = { id?: string; title: string; description?: string; urgency: string; assignee: string; target_date: string; status: string; depends_on_task_id?: string | null };
 type EditTaskFocus = 'title' | 'urgency' | 'date' | 'assignee' | 'depends' | 'all';
 type EquipmentItem = { id?: string; list_type: string; category: string; item_name: string; is_packed: boolean };
 type ShoppingTemplate = { id: string; name: string; items: { id: string; item_name: string; category?: string | null }[] };
+type DisambiguationTask = { originalName: string; matches: Item[]; quantityToSubtract: number; removeAll: boolean };
+type WordChoiceTask = { originalName: string; options: string[]; category: string };
+type View = 'HOME' | 'INVENTORY' | 'SHOPPING' | 'TASKS' | 'TEMPLATES' | 'SETTINGS';
+type NoteKind = 'ok' | 'warn' | 'danger' | 'info';
+type Note = { kind: NoteKind; text: string } | null;
 
 const THEME_OPTIONS = [
-  { key: 'pastel', name: 'פסטל', desc: 'לבנדר, ורוד ומנטה — רך ומודרני', bg: '#f9f6ff', primary: '#a78bfa', head: '#5b4b8a' },
-  { key: 'lyra', name: 'ליירה', desc: 'קרם, אלמוג ונייבי עם כותרות סריף', bg: '#fbf6ee', primary: '#e87a4f', head: '#1e2c5f' },
-  { key: 'ocean', name: 'אוקיינוס', desc: 'תכלת, טורקיז וכחול עמוק', bg: '#f0f9ff', primary: '#38bdf8', head: '#0c4a6e' },
-  { key: 'sunset', name: 'סורבה', desc: 'אפרסק, ורוד וצהוב שקיעה', bg: '#fff7ed', primary: '#fb923c', head: '#9a3412' },
-  { key: 'mono', name: 'מינימל', desc: 'שחור-לבן נקי, בלי צבע', bg: '#fafafa', primary: '#18181b', head: '#09090b' },
+  { key: 'pastel',   name: 'פסטל',    desc: 'לבנדר, ורוד ומנטה — רך ומודרני',      bg: '#f7f4ff', primary: '#7c5cf0', head: '#4a3a80' },
+  { key: 'lyra',     name: 'ליירה',   desc: 'קרם ואלמוג, כותרות סריף, קווים דקים', bg: '#fbf6ee', primary: '#d15c2c', head: '#1e2c5f' },
+  { key: 'ocean',    name: 'אוקיינוס', desc: 'תכלת וטורקיז, פינות רכות ורחבות',    bg: '#eef8ff', primary: '#0284c7', head: '#0c4a6e' },
+  { key: 'sunset',   name: 'סורבה',   desc: 'אפרסק וורוד שקיעה, חם ורווי',        bg: '#fff6ed', primary: '#ea6a09', head: '#9a3412' },
+  { key: 'mono',     name: 'מינימל',  desc: 'שחור־לבן, בלי צבע ובלי צללים',       bg: '#fafafa', primary: '#18181b', head: '#09090b' },
+  { key: 'midnight', name: 'חצות',    desc: 'כהה, סגול זוהר על רקע לילי',         bg: '#14131c', primary: '#8b63ff', head: '#cfc6ff' },
 ];
 
 const FONT_OPTIONS = [
-  { key: 'heebo', name: 'היבו', desc: 'נקי ומודרני', varName: 'var(--font-heebo)' },
-  { key: 'assistant', name: 'אסיסטנט', desc: 'קליל וידידותי', varName: 'var(--font-assistant)' },
-  { key: 'rubik', name: 'רוביק', desc: 'עגלגל ובולט', varName: 'var(--font-rubik)' },
-  { key: 'varela', name: 'ורלה ראונד', desc: 'רך ומעוגל', varName: 'var(--font-varela)' },
-  { key: 'frank', name: 'פרנק רוהל', desc: 'קלאסי עם אופי', varName: 'var(--font-frank)' },
+  { key: 'heebo',     name: 'היבו',        desc: 'נקי ומודרני',   varName: 'var(--font-heebo)' },
+  { key: 'assistant', name: 'אסיסטנט',    desc: 'קליל וידידותי', varName: 'var(--font-assistant)' },
+  { key: 'rubik',     name: 'רוביק',       desc: 'עגלגל ובולט',   varName: 'var(--font-rubik)' },
+  { key: 'varela',    name: 'ורלה ראונד', desc: 'רך ומעוגל',     varName: 'var(--font-varela)' },
+  { key: 'frank',     name: 'פרנק רוהל',  desc: 'קלאסי עם אופי', varName: 'var(--font-frank)' },
 ];
 
-type DisambiguationTask = { originalName: string; matches: Item[]; quantityToSubtract: number; removeAll: boolean; };
-type WordChoiceTask = { originalName: string; options: string[]; item: any };
-
-// Curated common Israeli-supermarket products (no emoji, plain names) used as a
-// baseline for autocomplete, merged at runtime with the household's own history.
+// Curated common Israeli-supermarket products, merged at runtime with the
+// household's own history to drive autocomplete.
 const SUPERMARKET_ITEMS: string[] = [
-  // חלב וביצים
   'חלב', 'חלב סויה', 'חלב שקדים', 'חלב שיבולת שועל', 'שמנת מתוקה', 'שמנת חמוצה', 'גבינה לבנה', 'גבינה צהובה',
   'קוטג׳', 'גבינת שמנת', 'גבינה בולגרית', 'גבינת פטה', 'מוצרלה', 'פרמזן', 'לבנה', 'יוגורט', 'יוגורט יווני',
   'גיל', 'מעדן', 'חמאה', 'מרגרינה', 'ביצים', 'ביצים חופש',
-  // ירקות
   'עגבניות', 'מלפפון', 'בצל', 'בצל סגול', 'שום', 'גזר', 'תפוח אדמה', 'בטטה', 'פלפל', 'גמבה', 'חציל',
   'קישוא', 'קישוא צהוב', 'כרוב', 'כרובית', 'ברוקולי', 'חסה', 'חסה אייסברג', 'תרד', 'פטרוזיליה', 'כוסברה',
   'שמיר', 'נענע', 'בזיליקום', 'סלרי', 'לימון', 'זנגביל', 'צנון', 'סלק', 'דלעת', 'תירס', 'שעועית ירוקה',
   'אפונה', 'פטריות', 'אבוקדו', 'עגבניות שרי', 'בצל ירוק',
-  // פירות
   'תפוח', 'בננה', 'תפוז', 'קלמנטינה', 'אגס', 'ענבים', 'אבטיח', 'מלון', 'תות', 'אפרסק', 'נקטרינה', 'שזיף',
   'משמש', 'מנגו', 'אננס', 'קיווי', 'רימון', 'תמר', 'ליצ׳י', 'אשכולית', 'פומלה',
-  // בשר ודגים
-  'עוף', 'חזה עוף', 'שוקיים', 'כנפיים', 'טחון', 'בשר טחון', 'אנטריקוט', 'שניצל', 'נקניקיות', 'קבב',
+  'עוף', 'חזה עוף', 'שוקיים', 'כנפיים', 'בשר טחון', 'אנטריקוט', 'שניצל', 'נקניקיות', 'קבב',
   'סלמון', 'טונה', 'דג', 'פילה דג', 'הודו', 'שווארמה',
-  // מאפים ולחם
   'לחם', 'לחם אחיד', 'לחמניות', 'פיתות', 'לחם מחמצת', 'בגט', 'חלה', 'טורטיה', 'קרואסון', 'עוגיות',
   'ביסקוויטים', 'קרקרים', 'מצות',
-  // יבשים ופנטרי
   'אורז', 'פסטה', 'ספגטי', 'קוסקוס', 'בורגול', 'קינואה', 'עדשים', 'חומוס יבש', 'שעועית יבשה', 'קמח',
   'קמח מלא', 'סוכר', 'סוכר חום', 'מלח', 'פלפל שחור', 'פפריקה', 'כמון', 'קורנפלור', 'אבקת אפייה', 'שמרים',
   'שמן', 'שמן זית', 'שמן קנולה', 'חומץ', 'רוטב סויה', 'קטשופ', 'מיונז', 'חרדל', 'טחינה', 'ריבה', 'דבש',
   'ממרח שוקולד', 'חמאת בוטנים', 'רסק עגבניות', 'תירס משומר', 'טונה בקופסה', 'זיתים', 'מלפפון חמוץ',
   'קורנפלקס', 'גרנולה', 'שיבולת שועל', 'אגוזים', 'שקדים', 'צימוקים', 'קפה', 'קפה נמס', 'תה', 'קקאו',
-  // משקאות
   'מים', 'מים מינרלים', 'סודה', 'קולה', 'ספרייט', 'מיץ', 'מיץ תפוזים', 'מיץ ענבים', 'לימונדה', 'בירה', 'יין',
-  // קפואים
   'גלידה', 'ירקות קפואים', 'אפונה קפואה', 'פיצה קפואה', 'מלאווח', 'בורקס', 'קרח',
-  // חטיפים וממתקים
   'שוקולד', 'חטיף', 'במבה', 'ביסלי', 'צ׳יפס', 'תפוצ׳יפס', 'פופקורן', 'מסטיק', 'סוכריות', 'ופל',
-  // תינוקות
   'מטרנה', 'חיתולים', 'מגבונים', 'מחית לתינוק', 'דייסת תינוק',
-  // ניקיון וטואלטיקה
   'נייר טואלט', 'מגבות נייר', 'סבון כלים', 'אבקת כביסה', 'מרכך כביסה', 'מטהר', 'אקונומיקה', 'ספריי ניקוי',
   'שקיות זבל', 'נייר אפייה', 'ניילון נצמד', 'שמפו', 'מרכך שיער', 'סבון גוף', 'משחת שיניים', 'מברשת שיניים',
-  'דאודורנט', 'קרם גוף', 'תחבושות', 'טמפונים', 'גילוח',
-  'דלי מגבונים', 'מגבונים לחים', 'מגבוני חיטוי', 'נוזל כלים', 'מרכך כלים', 'ספוג כלים',
+  'דאודורנט', 'קרם גוף', 'תחבושות', 'טמפונים', 'סכיני גילוח',
+  'דלי מגבונים', 'מגבונים לחים', 'מגבוני חיטוי', 'נוזל כלים', 'ספוג כלים',
   'כפפות חד פעמיות', 'צלחות חד פעמי', 'כוסות חד פעמי', 'סכום חד פעמי', 'מפיות נייר',
   'שקיות אשפה', 'קפסולות כביסה', 'טאבלטים למדיח', 'מלח למדיח', 'מבריק למדיח',
 ];
 
+/* ------------------------------------------------------------------ *
+ * icons — one 20px stroke set, currentColor, replaces emoji as UI
+ * ------------------------------------------------------------------ */
+const PATHS: Record<string, string> = {
+  box: 'M3.5 8 12 3.5 20.5 8v8L12 20.5 3.5 16V8Zm0 0L12 12.5 20.5 8M12 12.5v8',
+  cart: 'M3 4h2.2l2.4 10.4a2 2 0 0 0 2 1.6h7.9a2 2 0 0 0 2-1.5L21 8H6.4M10 20.5h.01M17 20.5h.01',
+  list: 'M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01',
+  pin: 'M9 3.5h6M12 3.5v5M6.5 20.5h11l-2-8.5a4 4 0 0 0-7 0l-2 8.5Z',
+  gear: 'M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Zm8-3.2-.1-1.1 1.6-1.5-1.6-2.8-2.1.6-1-.6-.4-2.1h-3.2l-.4 2.1-1 .6-2.1-.6-1.6 2.8 1.6 1.5-.1 1.1.1 1.1-1.6 1.5 1.6 2.8 2.1-.6 1 .6.4 2.1h3.2l.4-2.1 1-.6 2.1.6 1.6-2.8-1.6-1.5.1-1.1Z',
+  search: 'M10.5 17a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13Zm4.8.3L20 21.5',
+  refresh: 'M20 12a8 8 0 1 1-2.6-5.9M20 4.5V9h-4.5',
+  plus: 'M12 5v14M5 12h14',
+  minus: 'M5 12h14',
+  trash: 'M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10.5 11v5.5M13.5 11v5.5',
+  pencil: 'M4 20h4L20 8l-4-4L4 16v4Zm11-13 4 4',
+  check: 'M4.5 12.5 9.5 17.5 19.5 6.5',
+  x: 'M6 6l12 12M18 6 6 18',
+  chevron: 'M9 5l7 7-7 7',
+  chevronDown: 'M5 9l7 7 7-7',
+  snow: 'M12 3v18M4 7.5l16 9M20 7.5l-16 9',
+  suitcase: 'M4 8h16v12H4V8Zm5 0V5h6v3M4 13h16',
+  home: 'M4 10.5 12 4l8 6.5V20H4v-9.5Z',
+  home_out: 'M4 10.5 12 4l8 6.5V20h-5v-6H9v6H4v-9.5Z',
+  clock: 'M12 20.5a8.5 8.5 0 1 0 0-17 8.5 8.5 0 0 0 0 17ZM12 7.5V12l3.5 2',
+  sparkle: 'M12 3.5l1.8 5.2 5.2 1.8-5.2 1.8L12 17.5l-1.8-5.2L5 10.5l5.2-1.8L12 3.5Z',
+  alert: 'M12 8.5v5M12 17h.01M12 3.5 21 19.5H3L12 3.5Z',
+  folder: 'M3.5 7.5h5l2 2.5h10v9H3.5v-11.5Z',
+  whatsapp: 'M4 20l1.3-3.8A8 8 0 1 1 8.6 19L4 20Zm5-6.2c.6 1.4 1.9 2.6 3.3 3.1l1.3-1.1 2 .7v1.6',
+};
+
+function Icon({ name, size = 20, className = '' }: { name: string; size?: number; className?: string }) {
+  return (
+    <svg
+      width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round"
+      className={className} aria-hidden="true" focusable="false"
+    >
+      <path d={PATHS[name] || PATHS.box} />
+    </svg>
+  );
+}
+
+/* ---- deterministic accent per category, so lists are colour-scannable ---- */
+const SPINE_VARS = ['var(--c-primary)', 'var(--c-acc1)', 'var(--c-acc2)', 'var(--c-acc3)'];
+const spineFor = (key: string) => {
+  let h = 0;
+  for (let i = 0; i < (key || '').length; i++) h = (h * 31 + key.charCodeAt(i)) | 0;
+  return SPINE_VARS[Math.abs(h) % SPINE_VARS.length];
+};
+
+/* ---- local (not UTC) yyyy-mm-dd, so "today" is right before 03:00 ---- */
+const localToday = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const fmtDate = (iso: string) => {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  return d && m && y ? `${d}/${m}/${y}` : iso;
+};
+
 export default function HomePage() {
-  const today = new Date().toISOString().split('T')[0];
-  const [activeView, setActiveView] = useState<'HOME' | 'INVENTORY' | 'SHOPPING' | 'TASKS' | 'EQUIPMENT' | 'TEMPLATES' | 'SETTINGS'>('HOME');
+  const today = localToday();
+
+  /* ---------------- state ---------------- */
+  const [activeView, setActiveView] = useState<View>('HOME');
   const [appTheme, setAppTheme] = useState('pastel');
   const [appFont, setAppFont] = useState('heebo');
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [scrolled, setScrolled] = useState(false);
+
   const [invFilter, setInvFilter] = useState<'מקרר' | 'מזווה' | 'הכל'>('הכל');
   const [sortBy, setSortBy] = useState<'name' | 'category'>('name');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isSearchOpen, setIsSearchOpen] = useState(false); 
+
   const [inventory, setInventory] = useState<Item[]>([]);
   const [shoppingList, setShoppingList] = useState<any[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [input, setInput] = useState('');
+  const [equipmentItems, setEquipmentItems] = useState<EquipmentItem[]>([]);
+  const [shoppingTemplates, setShoppingTemplates] = useState<ShoppingTemplate[]>([]);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
+  const [historyNames, setHistoryNames] = useState<string[]>([]);
+
+  const [invInput, setInvInput] = useState('');
+  const [equipInput, setEquipInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [status, setStatus] = useState('');
-  const [pendingItems, setPendingItems] = useState<Item[]>([]);
+  const [note, setNote] = useState<Note>(null);
+
+  const [localPending, setLocalPending] = useState<any[]>([]);
   const [disambiguationItems, setDisambiguationItems] = useState<DisambiguationTask[]>([]);
   const [lowStockAlerts, setLowStockAlerts] = useState<Item[]>([]);
   const [duplicateShoppingAlerts, setDuplicateShoppingAlerts] = useState<string[]>([]);
   const [wordChoiceTasks, setWordChoiceTasks] = useState<WordChoiceTask[]>([]);
-  const [equipmentItems, setEquipmentItems] = useState<EquipmentItem[]>([]);
+  const [addedSummary, setAddedSummary] = useState<{ name: string; category: string }[]>([]);
+
   const [equipListType, setEquipListType] = useState<string>('חו"ל');
   const EQUIP_CATEGORIES = ['ניאו', 'חשמל', 'בגדים', 'תרופות', 'נעליים', 'ציוד נוסף'];
 
   const [newTask, setNewTask] = useState<Task>({
-    title: '', description: '', urgency: 'סטנדרטית', assignee: 'כולם', target_date: today, status: 'לא התחלתי', depends_on_task_id: null
+    title: '', description: '', urgency: 'סטנדרטית', assignee: 'כולם', target_date: today, status: 'לא התחלתי', depends_on_task_id: null,
   });
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [editTaskDraft, setEditTaskDraft] = useState<Task | null>(null);
   const [editTaskFocus, setEditTaskFocus] = useState<EditTaskFocus>('all');
-  const [poofingTaskId, setPoofingTaskId] = useState<string | null>(null);
+  const [poofingIds, setPoofingIds] = useState<string[]>([]);
+
   const [categoryAddOpen, setCategoryAddOpen] = useState<string | null>(null);
   const [categoryAddInput, setCategoryAddInput] = useState('');
   const [categoryAddLoading, setCategoryAddLoading] = useState(false);
-  const emptyQuickAddRow = () => ({ name: '', category: '', newCategory: '' });
-  const [quickAddRows, setQuickAddRows] = useState<{ name: string; category: string; newCategory: string }[]>(
-    [emptyQuickAddRow(), emptyQuickAddRow()]
-  );
-  const [quickAddSubmitting, setQuickAddSubmitting] = useState(false);
-  const [suggestRow, setSuggestRow] = useState<number | null>(null);
-  const [catGuessingRow, setCatGuessingRow] = useState<number | null>(null);
   const [editingCategoryName, setEditingCategoryName] = useState<string | null>(null);
   const [categoryNameValue, setCategoryNameValue] = useState('');
+
+  const emptyQuickAddRow = () => ({ name: '', category: '', newCategory: '' });
+  const [quickAddRows, setQuickAddRows] = useState([emptyQuickAddRow(), emptyQuickAddRow()]);
+  const [quickAddSubmitting, setQuickAddSubmitting] = useState(false);
+  const [suggestRow, setSuggestRow] = useState<number | null>(null);
+  const [suggestIdx, setSuggestIdx] = useState(0);
+  const [catGuessingRow, setCatGuessingRow] = useState<number | null>(null);
+
   const [showCategorize, setShowCategorize] = useState(false);
   const [categorizeAssignments, setCategorizeAssignments] = useState<Record<string, string>>({});
   const [categorizeNewCats, setCategorizeNewCats] = useState<Record<string, string>>({});
-  const [shoppingTemplates, setShoppingTemplates] = useState<ShoppingTemplate[]>([]);
-  const [templatesError, setTemplatesError] = useState<string | null>(null);
+
   const [showTemplatesPanel, setShowTemplatesPanel] = useState(false);
-  const [historyNames, setHistoryNames] = useState<string[]>([]);
-  const [addedSummary, setAddedSummary] = useState<{ name: string; category: string }[]>([]);
   const [showCreateTemplate, setShowCreateTemplate] = useState(false);
   const [newTemplateName, setNewTemplateName] = useState('');
   const [newTemplateItemsText, setNewTemplateItemsText] = useState('');
   const [addingTemplateId, setAddingTemplateId] = useState<string | null>(null);
   const [expandedTemplateId, setExpandedTemplateId] = useState<string | null>(null);
+
   const [celebration, setCelebration] = useState<{
-    fireworks: { top: number; left: number; delay: number; color: string; particles: { fx: number; fy: number; size: number }[] }[];
+    fireworks: { top: number; left: number; delay: number; color: string; color2: string;
+      streaks: { angle: number; fly: number; w: number; h: number }[];
+      sparks: { sx: number; sy: number; size: number; delay: number }[] }[];
     balloons: { left: number; delay: number; bx: number; br: number; emoji: string }[];
   } | null>(null);
+
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState('');
   const [editingCatItemId, setEditingCatItemId] = useState<string | null>(null);
   const [editCatValue, setEditCatValue] = useState('');
-  const statusTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const showStatus = (msg: string, autoClear: boolean = false) => {
-    setStatus(msg);
-    if (statusTimeoutRef.current) clearTimeout(statusTimeoutRef.current);
-    if (autoClear) statusTimeoutRef.current = setTimeout(() => setStatus(''), 4000);
+  const noteTimer = useRef<number | null>(null);
+  const fetchSeq = useRef(0);
+  const celebTimers = useRef<number[]>([]);
+
+  /* ---------------- helpers ---------------- */
+  const showNote = useCallback((kind: NoteKind, text: string, autoClear = true) => {
+    setNote({ kind, text });
+    if (noteTimer.current) window.clearTimeout(noteTimer.current);
+    if (autoClear) noteTimer.current = window.setTimeout(() => setNote(null), 4000);
+  }, []);
+
+  // Reports a failed write instead of pretending it succeeded.
+  const failed = useCallback((error: any, what: string) => {
+    if (!error) return false;
+    showNote('danger', `${what} נכשל: ${error.message || 'שגיאת שמירה'}`, false);
+    return true;
+  }, [showNote]);
+
+  // Strip leading emoji/punctuation and a trailing "(N)" so names compare cleanly.
+  const stripName = (n: string) => (n || '')
+    .replace(/^[^A-Za-z0-9֐-׿]+/, '')
+    .replace(/\s*\(\d+\)\s*$/, '')
+    .trim();
+  const normKey = (n: string) => stripName(n).toLowerCase();
+
+  const parseJson = async (body: any): Promise<any | null> => {
+    try {
+      const res = await fetch('/api/parse', { method: 'POST', body: JSON.stringify(body) });
+      if (!res.ok) { showNote('danger', `שירות הפירוק החזיר שגיאה (${res.status})`, false); return null; }
+      return await res.json();
+    } catch {
+      showNote('danger', 'אין חיבור לשירות הפירוק', false);
+      return null;
+    }
   };
 
-  const fetchData = async () => {
+  /* ---------------- data ---------------- */
+  const fetchData = useCallback(async () => {
+    const seq = ++fetchSeq.current;
     const [invRes, shopRes, catsRes, tskRes, equipRes, tplRes, tplItemsRes, histRes] = await Promise.all([
       supabase.from('inventory_items').select('*'),
       supabase.from('shopping_list').select('*'),
@@ -156,55 +259,48 @@ export default function HomePage() {
       supabase.from('shopping_template_items').select('*').order('sort_order'),
       supabase.from('shopping_history').select('item_name'),
     ]);
+    // A newer fetch already answered — discard this one so deleted rows
+    // cannot be resurrected by a slower earlier request.
+    if (seq !== fetchSeq.current) return;
 
-    if (invRes.data) {
-      const cleanInv = invRes.data.filter((i: any) => {
-        if (i.category === 'uncertain' || i.category === 'לא ידוע') {
-          setPendingItems(prev => [...prev, { ...i, needs_classification: true }]);
-          return false;
-        }
-        return true;
-      });
-      setInventory(cleanInv);
-    }
+    const firstErr = [invRes, shopRes, catsRes, tskRes, equipRes].map(r => (r as any).error).find(Boolean);
+    setLoadError(firstErr ? (firstErr.message || 'טעינת הנתונים נכשלה') : null);
+
+    if (invRes.data) setInventory(invRes.data as Item[]);
     if (shopRes.data) setShoppingList(shopRes.data);
-    if (catsRes.data) setCategories(catsRes.data.map(c => c.category_name));
-    if (tskRes.data) setTasks(tskRes.data);
-    if (equipRes.data) setEquipmentItems(equipRes.data);
-    if (histRes.data) {
-      setHistoryNames((histRes.data as any[]).map(h => h.item_name).filter(Boolean));
-    }
+    if (catsRes.data) setCategories(catsRes.data.map((c: any) => c.category_name));
+    if (tskRes.data) setTasks(tskRes.data as Task[]);
+    if (equipRes.data) setEquipmentItems(equipRes.data as EquipmentItem[]);
+    if (histRes.data) setHistoryNames((histRes.data as any[]).map(h => h.item_name).filter(Boolean));
 
-    // Surface a failed templates read instead of silently rendering an empty
-    // list — a missing grant or stale API schema cache looks identical to
-    // "no lists yet" otherwise.
     const tplErr = (tplRes as any).error || (tplItemsRes as any).error;
     setTemplatesError(tplErr ? (tplErr.message || 'שגיאה בטעינת הרשימות') : null);
-
     if (tplRes.data) {
-      const itemsByTemplate: Record<string, { id: string; item_name: string; category?: string | null }[]> = {};
+      const byTpl: Record<string, { id: string; item_name: string; category?: string | null }[]> = {};
       for (const it of (tplItemsRes.data || []) as any[]) {
-        const tid = it.template_id;
-        (itemsByTemplate[tid] = itemsByTemplate[tid] || []).push({ id: it.id, item_name: it.item_name, category: it.category || null });
+        (byTpl[it.template_id] = byTpl[it.template_id] || []).push({ id: it.id, item_name: it.item_name, category: it.category || null });
       }
-      setShoppingTemplates((tplRes.data as any[]).map(t => ({
-        id: t.id,
-        name: t.name,
-        items: itemsByTemplate[t.id] || [],
-      })));
+      setShoppingTemplates((tplRes.data as any[]).map(t => ({ id: t.id, name: t.name, items: byTpl[t.id] || [] })));
     }
-  };
+    setLoading(false);
+  }, []);
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
-  // Load persisted design preferences.
   useEffect(() => {
     try {
       const t = localStorage.getItem('neo_theme');
       if (t && THEME_OPTIONS.some(o => o.key === t)) setAppTheme(t);
       const f = localStorage.getItem('neo_font');
       if (f && FONT_OPTIONS.some(o => o.key === f)) setAppFont(f);
-    } catch { /* private mode etc. */ }
+    } catch { /* private mode */ }
+  }, []);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
   // The "added to shopping" recap clears itself after 10s.
@@ -214,894 +310,37 @@ export default function HomePage() {
     return () => window.clearTimeout(t);
   }, [addedSummary]);
 
-  const applyTheme = (t: string) => {
-    setAppTheme(t);
-    try { localStorage.setItem('neo_theme', t); } catch {}
-  };
-  const applyFont = (f: string) => {
-    setAppFont(f);
-    try { localStorage.setItem('neo_font', f); } catch {}
-  };
+  useEffect(() => () => {
+    if (noteTimer.current) window.clearTimeout(noteTimer.current);
+    celebTimers.current.forEach(window.clearTimeout);
+  }, []);
 
-  const handleRefresh = () => window.location.reload();
+  const applyTheme = (t: string) => { setAppTheme(t); try { localStorage.setItem('neo_theme', t); } catch {} };
+  const applyFont = (f: string) => { setAppFont(f); try { localStorage.setItem('neo_font', f); } catch {} };
 
-  const changeView = (view: typeof activeView) => {
-    setActiveView(view); setIsMenuOpen(false); setIsSearchOpen(false); setSearchTerm(''); setAddedSummary([]);
-  };
-
-  const updateExactQuantity = async (item: Item, newQty: number) => {
-    const finalQty = Math.max(0, newQty);
-    if (finalQty === item.quantity) return;
-    const now = new Date().toISOString();
-    setInventory(prev => prev.map(i => i.id === item.id ? { ...i, quantity: finalQty, updated_at: now } : i));
-    await supabase.from('inventory_items').update({ quantity: finalQty, updated_at: now }).eq('id', item.id);
-    
-    if (finalQty <= 2 && finalQty < item.quantity) {
-      const alreadyInShopping = shoppingList.some(s => s.item_name === item.item_name);
-      if (!alreadyInShopping) {
-        setLowStockAlerts(prev => [...prev.filter(i => i.item_name !== item.item_name), { ...item, quantity: finalQty }]);
-      }
-    }
-  };
-
-  const updateInventoryField = async (item: Item, field: string, value: any) => {
-    if ((item as any)[field] === value) return;
-    setInventory(prev => prev.map(i => i.id === item.id ? { ...i, [field]: value } : i));
-    await supabase.from('inventory_items').update({ [field]: value }).eq('id', item.id);
-  };
-
-  const handlePlus = (item: Item) => updateExactQuantity(item, item.quantity + 1);
-  const handleMinus = (item: Item) => updateExactQuantity(item, item.quantity - 1);
-
-  const deleteInventoryItem = async (item: Item) => {
-    if (!confirm(`למחוק לצמיתות את "${item.item_name}"?`)) return;
-    setInventory(prev => prev.filter(i => i.id !== item.id));
-    await supabase.from('inventory_items').delete().eq('id', item.id);
-  };
-
-  // Keep every name that ever passed through the shopping list, so it stays
-  // available to autocomplete after the item is gone.
-  const rememberItemName = async (rawName: string) => {
-    const name = stripName(rawName || '');
-    if (!name) return;
-    setHistoryNames(prev => prev.some(n => n.toLowerCase() === name.toLowerCase()) ? prev : [...prev, name]);
-    await supabase
-      .from('shopping_history')
-      .upsert(
-        { item_name: name, household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72', last_used: new Date().toISOString() },
-        { onConflict: 'item_name', ignoreDuplicates: false }
-      );
-  };
-
-  const deleteShoppingItem = async (shopItem: any, skipConfirm = false) => {
-    if (!skipConfirm && !confirm(`למחוק לצמיתות את "${shopItem.item_name}"?`)) return;
-    setShoppingList(prev => prev.filter(i => i.id !== shopItem.id));
-    rememberItemName(shopItem.item_name);
-    await supabase.from('shopping_list').delete().eq('id', shopItem.id);
-  };
-
-  const moveShoppingToInventory = async (shopItem: any, qty: number) => {
-    const existing = inventory.find(i => i.item_name === shopItem.item_name);
-    if (existing) {
-      const newQty = (existing.quantity || 0) + qty;
-      await supabase.from('inventory_items').update({ quantity: newQty }).eq('id', existing.id);
-    } else {
-      await supabase.from('inventory_items').insert([{
-        item_name: shopItem.item_name, quantity: qty, category: shopItem.category || 'כללי',
-        location: 'מזווה', household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72'
-      }]);
-    }
-    rememberItemName(shopItem.item_name);
-    await supabase.from('shopping_list').delete().eq('id', shopItem.id);
-    fetchData();
-    showStatus(`✅ ${shopItem.item_name} הועבר למלאי`, true);
-  };
-
-  const executeRemoval = async (invItem: Item, qtyToSubtract: number, removeAll: boolean) => {
-    const newQty = removeAll ? 0 : invItem.quantity + qtyToSubtract; // qtyToSubtract is negative
-    await updateExactQuantity(invItem, newQty);
-  };
-
-  const saveItemWithCategory = async (item: any) => {
-    const name = item.name || item.item_name || 'פריט לא ידוע';
-    let cat = item.category || 'כללי';
-    if (cat.toLowerCase() === 'uncertain' || cat === 'לא ידוע') cat = 'כללי';
-
-    if (cat !== 'כללי' && !categories.includes(cat)) {
-      await supabase.from('category_order').insert([{ category_name: cat, sort_order: 99 }]);
-      setCategories(prev => Array.from(new Set([...prev, cat])));
-    }
-
-    if (activeView === 'INVENTORY') {
-      let existing = inventory.find(i => i.item_name === name);
-      if (existing) {
-        const newQty = Math.max(0, existing.quantity + (item.quantity || 1));
-        await supabase.from('inventory_items').update({ quantity: newQty, category: cat }).eq('id', existing.id);
-      } else {
-        await supabase.from('inventory_items').insert([{ 
-          item_name: name, quantity: Math.max(0, item.quantity || 1), category: cat, location: item.location || 'מזווה', household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72' 
-        }]);
-      }
-    } else if (activeView === 'SHOPPING') {
-      const finalName = item.quantity > 1 ? `${name} (${item.quantity})` : name;
-      await supabase.from('shopping_list').insert([{ item_name: finalName, category: cat }]);
-    }
-    fetchData();
-  };
-
-  const handleUpdate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim()) return;
-    showStatus('מעבד...', false);
-    
-    try {
-      const res = await fetch('/api/parse', { method: 'POST', body: JSON.stringify({ text: input, categories: categories }) });
-      const data = await res.json();
-      
-      if (data.new_categories && data.new_categories.length > 0) {
-        for (const nc of data.new_categories) {
-          if (!categories.includes(nc)) {
-            await supabase.from('category_order').insert([{ category_name: nc, sort_order: 99 }]);
-            setCategories(prev => Array.from(new Set([...prev, nc])));
-          }
-        }
-      }
-
-      if (data.items && data.items.length > 0) {
-        const certainItems: any[] = [];
-        const uncertainItems: any[] = [];
-        const ambiguousRemovals: DisambiguationTask[] = [];
-        let movedCount = 0;
-
-        const duplicateShoppingItems: string[] = [];
-        const wordChoiceTasksLocal: WordChoiceTask[] = [];
-        const normalizeShopName = (n: string) => (n || '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
-        const stripPrefix = (w: string) => w.replace(/^(ה|ב|ל|מ|ש|ו|כ)/, '');
-
-        for (const item of data.items) {
-          const name = item.name || item.item_name || 'פריט';
-          const isRemoval = (item.quantity || 0) < 0 || item.removeAll;
-          const cat = (item.category || '').toLowerCase();
-
-          // לוגיקת העברה בין קטגוריות (מלאי + קניות)
-          if (item.moveToCategory) {
-            const cleanName = name.replace(/^(את כל ה|כל ה|את ה|ה)/g, '').trim().toLowerCase();
-            const table = activeView === 'SHOPPING' ? 'shopping_list' : 'inventory_items';
-            const sourceList = activeView === 'SHOPPING' ? shoppingList : inventory;
-            const matches = sourceList.filter(i => (i.item_name || '').toLowerCase().includes(cleanName));
-            for (const match of matches) {
-              await supabase.from(table).update({ category: item.moveToCategory }).eq('id', match.id);
-            }
-            if (matches.length === 0) showStatus(`לא מצאתי "${name}" ברשימה`, true);
-            else movedCount += matches.length;
-          }
-          // לוגיקת המחיקה: חיפוש עם ניקוי תחיליות עבריות וסיווג כפילויות
-          else if (activeView === 'INVENTORY' && isRemoval) {
-            const cleanName = name.replace(/^(את כל ה|כל ה|את ה|ה)/g, '').trim().toLowerCase();
-            const matches = inventory.filter(i => (i.item_name || '').toLowerCase().includes(cleanName));
-            // אם יש התאמה מדויקת אחת בלבד - בצע ישירות
-            const exactMatch = matches.find(i => (i.item_name || '').toLowerCase() === cleanName);
-            if (exactMatch && matches.length > 1) {
-              // יש התאמה מדויקת אבל גם אחרות - שאל את המשתמש
-              ambiguousRemovals.push({ originalName: name, matches, quantityToSubtract: item.quantity, removeAll: item.removeAll });
-            } else if (matches.length === 1) {
-              await executeRemoval(matches[0], item.quantity, item.removeAll);
-            } else if (matches.length > 1) {
-              ambiguousRemovals.push({ originalName: name, matches, quantityToSubtract: item.quantity, removeAll: item.removeAll });
-            } else {
-              showStatus(`לא מצאתי "${name}" במלאי`, true);
-            }
-          } 
-          // הוספת פריט (רגיל)
-          else {
-            // בדיקת כפילות ברשימת קניות
-            if (activeView === 'SHOPPING') {
-              const baseName = normalizeShopName(name);
-              const existsInList = shoppingList.some(s => normalizeShopName(s.item_name || '') === baseName);
-              const alreadyQueued = certainItems.some(c => normalizeShopName(c.name || c.item_name || '') === baseName)
-                || uncertainItems.some(u => normalizeShopName(u.name || u.item_name || '') === baseName);
-              if (existsInList || alreadyQueued) {
-                duplicateShoppingItems.push(name);
-                continue;
-              }
-              // בדיקת מילים-מוצרים-בפני-עצמן
-              const words = baseName.split(/\s+/).filter(w => w.length > 1);
-              if (words.length > 1) {
-                const knownNames = new Set<string>();
-                inventory.forEach(i => knownNames.add(normalizeShopName(i.item_name || '')));
-                shoppingList.forEach(s => knownNames.add(normalizeShopName(s.item_name || '')));
-                const matchingWords: string[] = [];
-                for (const w of words) {
-                  const candidates = [w, stripPrefix(w)].filter(c => c.length > 1);
-                  for (const c of candidates) {
-                    if (knownNames.has(c) && !matchingWords.includes(c)) matchingWords.push(c);
-                  }
-                }
-                if (matchingWords.length > 0) {
-                  wordChoiceTasksLocal.push({ originalName: name, options: matchingWords, item });
-                  continue;
-                }
-              }
-            }
-            if (item.needs_classification || cat === 'uncertain' || cat === 'לא ידוע' || cat === 'null') {
-              uncertainItems.push(item);
-            } else {
-              certainItems.push(item);
-            }
-          }
-        }
-
-        // ביצוע השמירות
-        for (const item of certainItems) await saveItemWithCategory(item);
-        
-        // עדכון סטייטים לחלונות הקופצים
-        if (duplicateShoppingItems.length > 0) {
-          setDuplicateShoppingAlerts(prev => Array.from(new Set([...prev, ...duplicateShoppingItems])));
-        }
-        if (wordChoiceTasksLocal.length > 0) {
-          setWordChoiceTasks(prev => [...prev, ...wordChoiceTasksLocal]);
-        }
-        if (ambiguousRemovals.length > 0) {
-          setDisambiguationItems(prev => [...prev, ...ambiguousRemovals]);
-          showStatus(`יש כמה אפשרויות`, false);
-        } else if (wordChoiceTasksLocal.length > 0 && certainItems.length === 0 && uncertainItems.length === 0) {
-          showStatus(`🤔 איזה מהמוצרים?`, false);
-        } else if (uncertainItems.length > 0) {
-          setPendingItems(uncertainItems.map((i: any) => ({ ...i, item_name: i.name || i.item_name || 'פריט' })));
-          showStatus(`🤔 נדרש סיווג`, false);
-        } else if (movedCount > 0) {
-          fetchData();
-          showStatus(`✅ ${movedCount} פריטים הועברו!`, true);
-        } else if (duplicateShoppingItems.length > 0 && certainItems.length === 0) {
-          showStatus(`⚠️ כבר ברשימה`, false);
-        } else {
-          showStatus('✅ עודכן!', true);
-        }
-      }
-      
-      setInput(''); 
-    } catch { showStatus('❌ שגיאה בחיבור', true); }
-  };
-
-  const handleResolvePending = async (item: Item, selectedCategory: string) => {
-    setPendingItems(prev => prev.filter(p => p.item_name !== item.item_name)); 
-    await saveItemWithCategory({...item, category: selectedCategory});
-    if (pendingItems.length <= 1 && disambiguationItems.length === 0) showStatus('✅ מעודכן!', true);
-  };
-
-  const handleResolveDisambiguation = async (task: DisambiguationTask, chosenItem: Item | 'ALL') => {
-    if (chosenItem === 'ALL') {
-      for (const match of task.matches) {
-        await executeRemoval(match, task.quantityToSubtract, task.removeAll);
-      }
-    } else {
-      await executeRemoval(chosenItem, task.quantityToSubtract, task.removeAll);
-    }
-    setDisambiguationItems(prev => prev.filter(t => t !== task));
-    if (disambiguationItems.length <= 1 && pendingItems.length === 0) showStatus('✅ המלאי עודכן!', true);
-  };
-
-  const handleResolveWordChoice = async (task: WordChoiceTask, chosen: string) => {
-    setWordChoiceTasks(prev => prev.filter(t => t !== task));
-    const baseName = (chosen || '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
-    const existsInList = shoppingList.some(s => (s.item_name || '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase() === baseName);
-    if (existsInList) {
-      setDuplicateShoppingAlerts(prev => Array.from(new Set([...prev, chosen])));
-      showStatus(`⚠️ כבר ברשימה`, false);
-      return;
-    }
-    await saveItemWithCategory({ ...task.item, name: chosen, item_name: chosen });
-    if (wordChoiceTasks.length <= 1) showStatus('✅ נוסף לקניות', true);
-  };
-
-  const splitShoppingInput = (text: string): string[] => {
-    const trimmed = (text || '').trim();
-    if (!trimmed) return [];
-    // Commas present → each segment between commas is one item, verbatim.
-    if (/[,،]/.test(trimmed)) {
-      return trimmed.split(/[,،]/).map(s => s.trim()).filter(Boolean);
-    }
-    // No commas → every word is its own item, except recognised multi-word
-    // products (catalog, past purchases, current lists) which stay whole.
-    const tokens = trimmed.split(/\s+/);
-    const items: string[] = [];
-    let i = 0;
-    while (i < tokens.length) {
-      let matched = false;
-      for (const compound of compoundNames) {
-        const compTokens = compound.split(/\s+/);
-        if (i + compTokens.length <= tokens.length) {
-          const slice = tokens.slice(i, i + compTokens.length).join(' ');
-          if (slice.toLowerCase() === compound.toLowerCase()) {
-            items.push(slice);
-            i += compTokens.length;
-            matched = true;
-            break;
-          }
-        }
-      }
-      if (!matched) {
-        items.push(tokens[i]);
-        i++;
-      }
-    }
-    return items;
-  };
-
-  const updateQuickAddRow = (idx: number, patch: Partial<{ name: string; category: string; newCategory: string }>) => {
-    setQuickAddRows(prev => {
-      const next = prev.map((r, i) => i === idx ? { ...r, ...patch } : r);
-      // Auto-grow: typing into the last row appends a fresh empty row.
-      if (idx === prev.length - 1 && next[idx].name.trim() && next.length < 20) {
-        next.push(emptyQuickAddRow());
-      }
-      return next;
-    });
-  };
-
-  // On entering an item, auto-pick a category (editable) if the user hasn't chosen one.
-  const autoFillRowCategory = async (idx: number, rawName: string) => {
-    const name = (rawName || '').trim();
-    if (!name) return;
-    const current = quickAddRows[idx];
-    if (!current || current.category) return; // user already chose one
-    setCatGuessingRow(idx);
-    try {
-      const guesses = await guessCategories([name]);
-      const normalize = (n: string) => (n || '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
-      const guess = guesses[normalize(name)];
-      if (guess) {
-        setCategories(prev => prev.includes(guess) ? prev : [...prev, guess]);
-        setQuickAddRows(prev => prev.map((r, i) => (i === idx && !r.category) ? { ...r, category: guess } : r));
-      }
-    } finally {
-      setCatGuessingRow(null);
-    }
-  };
-
-  const startRenameCategory = (cat: string) => {
-    setEditingCategoryName(cat);
-    setCategoryNameValue(cat);
-  };
-
-  const saveRenameCategory = async (oldCat: string) => {
-    const newCat = categoryNameValue.trim();
-    setEditingCategoryName(null);
-    if (!newCat || newCat === oldCat) return;
-    await supabase.from('shopping_list').update({ category: newCat }).eq('category', oldCat);
-    await supabase.from('category_order').update({ category_name: newCat }).eq('category_name', oldCat);
-    setCategories(prev => Array.from(new Set(prev.map(c => c === oldCat ? newCat : c))));
-    fetchData();
-    showStatus(`✏️ הקטגוריה שונתה ל"${newCat}"`, true);
-  };
-
-  const deleteCategory = async (cat: string) => {
-    if (!confirm(`למחוק את הקטגוריה "${cat}"? הפריטים שבה יעברו ל"כללי" (לא יימחקו).`)) return;
-    await supabase.from('shopping_list').update({ category: 'כללי' }).eq('category', cat);
-    await supabase.from('category_order').delete().eq('category_name', cat);
-    setCategories(prev => prev.filter(c => c !== cat));
-    fetchData();
-    showStatus(`🗑️ הקטגוריה "${cat}" נמחקה`, true);
-  };
-
-  // Ask the parser to suggest a category per item name. Returns a map keyed by
-  // normalized name. Unusable suggestions (uncertain/null) are omitted.
-  const guessCategories = async (names: string[]): Promise<Record<string, string>> => {
-    const normalize = (n: string) => (n || '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
-    const guesses: Record<string, string> = {};
-    const clean = names.map(n => (n || '').trim()).filter(Boolean);
-    if (clean.length === 0) return guesses;
-    try {
-      const res = await fetch('/api/parse', {
-        method: 'POST',
-        body: JSON.stringify({ text: clean.join(', '), categories }),
-      });
-      const data = await res.json();
-      for (const it of ((data && data.items) || []) as any[]) {
-        const itemName = (it.name || it.item_name || '').trim();
-        const rawCat: string = (it.category || '').toString();
-        const usable = rawCat && !['uncertain', 'null', 'לא ידוע'].includes(rawCat.toLowerCase()) && !it.needs_classification;
-        if (itemName && usable) guesses[normalize(itemName)] = rawCat;
-      }
-    } catch {
-      // network error → caller falls back to 'כללי'
-    }
-    return guesses;
-  };
-
-  const handleQuickAddSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (quickAddSubmitting) return;
-    const rows = quickAddRows.filter(r => r.name.trim());
-    if (rows.length === 0) return;
-    setQuickAddSubmitting(true);
-    showStatus('מעבד...', false);
-    const normalize = (n: string) => (n || '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
-
-    // Items where the user did not pick a category get auto-classified.
-    const userPicked = (r: { category: string; newCategory: string }) =>
-      (r.category === '__other__' ? r.newCategory.trim() : r.category);
-    const needGuess = rows.filter(r => !userPicked(r)).map(r => r.name.trim());
-    const guesses = needGuess.length ? await guessCategories(needGuess) : {};
-
-    const duplicates: string[] = [];
-    const queued = new Set<string>();
-    const summary: { name: string; category: string }[] = [];
-    let added = 0;
-    try {
-      for (const row of rows) {
-        const name = row.name.trim();
-        let cat: string;
-        if (row.category === '__other__') {
-          cat = row.newCategory.trim() || guesses[normalize(name)] || 'כללי';
-        } else if (row.category) {
-          cat = row.category;
-        } else {
-          cat = guesses[normalize(name)] || 'כללי';
-        }
-        const base = normalize(name);
-        if (!base || queued.has(base)) continue;
-        if (shoppingList.some(s => normalize(s.item_name || '') === base)) {
-          duplicates.push(name);
-          continue;
-        }
-        queued.add(base);
-        if (cat !== 'כללי' && !categories.includes(cat)) {
-          await supabase.from('category_order').insert([{ category_name: cat, sort_order: 99 }]);
-          setCategories(prev => Array.from(new Set([...prev, cat])));
-        }
-        await supabase.from('shopping_list').insert([{ item_name: name, category: cat }]);
-        summary.push({ name, category: cat });
-        added++;
-      }
-      if (duplicates.length > 0) {
-        setDuplicateShoppingAlerts(prev => Array.from(new Set([...prev, ...duplicates])));
-      }
-      setAddedSummary(summary);
-      // Single notification: the green summary panel itself states the
-      // category per item, so no separate "added" status pill.
-      if (added > 0) showStatus('');
-      else if (duplicates.length > 0) showStatus('⚠️ כבר ברשימה', true);
-      else showStatus('✅ עודכן', true);
-      setQuickAddRows([emptyQuickAddRow(), emptyQuickAddRow()]);
-      fetchData();
-    } catch {
-      showStatus('❌ שגיאה בשמירה', true);
-    } finally {
-      setQuickAddSubmitting(false);
-    }
-  };
-
-  const addTemplateToShopping = async (template: ShoppingTemplate) => {
-    if (addingTemplateId) return;
-    if (!template.items.length) {
-      showStatus('הרשימה ריקה', true);
-      return;
-    }
-    setAddingTemplateId(template.id);
-    showStatus('מעבד...', false);
-    const normalize = (n: string) => (n || '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
-    const itemsList = template.items
-      .map(i => ({ name: i.item_name.trim(), category: (i.category || '').trim() }))
-      .filter(i => i.name);
-
-    // Items without a stored category get an AI suggestion in one call.
-    const needGuess = itemsList.filter(i => !i.category).map(i => i.name);
-    const guesses = needGuess.length ? await guessCategories(needGuess) : {};
-
-    const duplicates: string[] = [];
-    const summary: { name: string; category: string }[] = [];
-    let added = 0;
-    try {
-      for (const it of itemsList) {
-        const base = normalize(it.name);
-        if (!base) continue;
-        if (shoppingList.some(s => normalize(s.item_name || '') === base)) {
-          duplicates.push(it.name);
-          continue;
-        }
-        const cat = it.category || guesses[base] || 'כללי';
-        if (cat && cat !== 'כללי' && !categories.includes(cat)) {
-          await supabase.from('category_order').insert([{ category_name: cat, sort_order: 99 }]);
-          setCategories(prev => Array.from(new Set([...prev, cat])));
-        }
-        await supabase.from('shopping_list').insert([{
-          item_name: it.name,
-          category: cat,
-          category_auto: !it.category,
-        }]);
-        summary.push({ name: it.name, category: cat });
-        added++;
-      }
-      if (duplicates.length > 0) {
-        setDuplicateShoppingAlerts(prev => Array.from(new Set([...prev, ...duplicates])));
-      }
-      setAddedSummary(summary);
-      // Single notification: the green summary panel states the category.
-      if (added > 0) showStatus('');
-      else if (duplicates.length > 0) showStatus('⚠️ כל הפריטים כבר ברשימה', true);
-      else showStatus('✅ עודכן', true);
-      fetchData();
-    } catch {
-      showStatus('❌ שגיאה בשמירה', true);
-    } finally {
-      setAddingTemplateId(null);
-    }
-  };
-
-  const createTemplate = async () => {
-    const name = newTemplateName.trim();
-    const items = newTemplateItemsText
-      .split('\n')
-      .map(l => l.trim())
-      .filter(Boolean);
-    if (!name) {
-      showStatus('❌ חסר שם רשימה', true);
-      return;
-    }
-    if (items.length === 0) {
-      showStatus('❌ אין פריטים ברשימה', true);
-      return;
-    }
-    const { data: inserted, error } = await supabase
-      .from('shopping_templates')
-      .insert([{ name, household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72' }])
-      .select()
-      .single();
-    if (error || !inserted) {
-      showStatus('❌ שגיאה ביצירה', true);
-      return;
-    }
-    const itemsToInsert = items.map((item_name, idx) => ({
-      template_id: (inserted as any).id,
-      item_name,
-      sort_order: idx + 1,
-    }));
-    await supabase.from('shopping_template_items').insert(itemsToInsert);
-    setNewTemplateName('');
-    setNewTemplateItemsText('');
-    setShowCreateTemplate(false);
-    showStatus(`✅ נוצרה הרשימה "${name}"`, true);
-    fetchData();
-  };
-
-  const deleteTemplate = async (template: ShoppingTemplate) => {
-    if (!confirm(`למחוק את הרשימה "${template.name}" לצמיתות?`)) return;
-    await supabase.from('shopping_templates').delete().eq('id', template.id);
-    showStatus(`🗑️ הרשימה "${template.name}" נמחקה`, true);
-    fetchData();
-  };
-
-  const openCategorize = () => {
-    setCategorizeAssignments({});
-    setCategorizeNewCats({});
-    setShowCategorize(true);
-  };
-
-  const applyCategorizeAssignments = async () => {
-    const entries = Object.entries(categorizeAssignments).filter(([, v]) => v && v !== 'כללי');
-    if (entries.length === 0) {
-      setShowCategorize(false);
-      setCategorizeAssignments({});
-      return;
-    }
-    showStatus('מעבד...', false);
-    let updated = 0;
-    for (const [id, chosen] of entries) {
-      let target = chosen;
-      if (chosen === '__other__') {
-        const custom = (categorizeNewCats[id] || '').trim();
-        if (!custom) continue;
-        target = custom;
-        if (!categories.includes(target)) {
-          await supabase.from('category_order').insert([{ category_name: target, sort_order: 99 }]);
-          setCategories(prev => Array.from(new Set([...prev, target])));
-        }
-      }
-      await supabase.from('shopping_list').update({ category: target }).eq('id', id);
-      updated++;
-    }
-    setCategorizeAssignments({});
-    setCategorizeNewCats({});
+  const changeView = (view: View) => {
+    setActiveView(view);
+    setIsMenuOpen(false);
+    setSearchTerm('');
+    setAddedSummary([]);
+    setNote(null);
+    setInvInput('');
+    setEquipInput('');
     setShowCategorize(false);
-    fetchData();
-    showStatus(`✅ סווגו ${updated} פריטים`, true);
+    window.scrollTo({ top: 0 });
   };
 
-  const handleCategoryAdd = async (e: React.FormEvent, category: string) => {
-    e.preventDefault();
-    const text = categoryAddInput.trim();
-    if (!text || categoryAddLoading) return;
-    setCategoryAddLoading(true);
-    const normalize = (n: string) => (n || '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
-    try {
-      const names = splitShoppingInput(text);
-      if (names.length === 0) {
-        showStatus('❌ לא זוהו פריטים', true);
-        return;
-      }
-      const duplicates: string[] = [];
-      const queuedBase = new Set<string>();
-      const summary: { name: string; category: string }[] = [];
-      let addedCount = 0;
-      for (const name of names) {
-        const baseName = normalize(name);
-        if (!baseName || queuedBase.has(baseName)) continue;
-        if (shoppingList.some(s => normalize(s.item_name || '') === baseName)) {
-          duplicates.push(name);
-          continue;
-        }
-        queuedBase.add(baseName);
-        await supabase.from('shopping_list').insert([{ item_name: name, category }]);
-        summary.push({ name, category });
-        addedCount++;
-      }
-      if (duplicates.length > 0) {
-        setDuplicateShoppingAlerts(prev => Array.from(new Set([...prev, ...duplicates])));
-      }
-      setAddedSummary(summary);
-      // Single notification: the green summary panel states the category.
-      if (addedCount > 0) {
-        showStatus('');
-      } else if (duplicates.length > 0) {
-        showStatus('⚠️ כבר ברשימה', true);
-      } else {
-        showStatus('✅ עודכן', true);
-      }
-      setCategoryAddInput('');
-      setCategoryAddOpen(null);
-      fetchData();
-    } catch {
-      showStatus('❌ שגיאה בחיבור', true);
-    } finally {
-      setCategoryAddLoading(false);
-    }
-  };
-
-  const addToShopping = async (item: Item) => {
-    await supabase.from('shopping_list').insert([{ item_name: item.item_name || 'פריט', category: item.category || 'כללי' }]);
-    setLowStockAlerts(prev => prev.filter(i => i.item_name !== item.item_name));
-    showStatus('✅ נוסף לקניות', true); fetchData();
-  };
-
-  const saveEditedName = async (id: string, table: any) => {
-    if (editNameValue.trim()) await supabase.from(table).update({ item_name: editNameValue.trim() }).eq('id', id);
-    setEditingId(null); fetchData();
-  };
-
-  const saveEditedCategory = async (id: string, table: string, directValue?: string) => {
-    const val = (directValue || editCatValue).trim();
-    if (val) await supabase.from(table).update({ category: val }).eq('id', id);
-    setEditingCatItemId(null); fetchData();
-  };
-
-  const urgencyEmoji = (u: string): string => {
-    if (u === 'דחופה מאד') return '🚨';
-    if (u === 'גבוהה') return '🔥';
-    if (u === 'סטנדרטית') return '📋';
-    if (u === 'נמוכה') return '💤';
-    return '📋';
-  };
-
-  const buildWhatsAppLink = (t: Task) => {
-    const dateParts = t.target_date.split('-');
-    const formattedDate = `${dateParts[2]}/${dateParts[1]}/${dateParts[0]}`;
-    let text = `*משימה חדשה: ${t.title}*\n`;
-    if (t.description) text += `${t.description}\n`;
-    text += `\n*באחריות:* ${t.assignee}`;
-    text += `\n*תאריך יעד:* ${formattedDate}`;
-    text += `\n*דחיפות:* ${t.urgency}`;
-    return `https://wa.me/?text=${encodeURIComponent(text)}`;
-  };
-
-  const persistNewTask = async (sendToWhatsApp: boolean) => {
-    if (!newTask.title) return;
-    const { error } = await supabase.from('tasks').insert([newTask]);
-    if (error) return;
-    const taskCopy = { ...newTask };
-    setNewTask({ title: '', description: '', urgency: 'סטנדרטית', assignee: 'כולם', target_date: today, status: 'לא התחלתי', depends_on_task_id: null });
-    setShowTaskForm(false);
-    fetchData();
-    if (sendToWhatsApp) {
-      window.location.href = buildWhatsAppLink(taskCopy);
-    }
-  };
-
-  const handleAddTask = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await persistNewTask(true);
-  };
-
-  const startEditTask = (task: Task, focus: EditTaskFocus = 'all') => {
-    if (editingTaskId === task.id) {
-      // toggle off if clicking the same area twice with no specific focus
-      if (focus === 'all') {
-        setEditingTaskId(null);
-        setEditTaskDraft(null);
-      } else {
-        setEditTaskFocus(focus);
-      }
-      return;
-    }
-    setEditingTaskId(task.id || null);
-    setEditTaskDraft({ ...task, depends_on_task_id: task.depends_on_task_id || null });
-    setEditTaskFocus(focus);
-  };
-
-  const cancelEditTask = () => {
-    setEditingTaskId(null);
-    setEditTaskDraft(null);
-    setEditTaskFocus('all');
-  };
-
-  const saveEditTask = async () => {
-    if (!editingTaskId || !editTaskDraft) return;
-    const updates: any = {
-      title: editTaskDraft.title,
-      description: editTaskDraft.description || '',
-      urgency: editTaskDraft.urgency,
-      assignee: editTaskDraft.assignee,
-      target_date: editTaskDraft.target_date,
-      depends_on_task_id: editTaskDraft.depends_on_task_id || null,
-    };
-    setTasks(prev => prev.map(t => t.id === editingTaskId ? { ...t, ...updates } : t));
-    await supabase.from('tasks').update(updates).eq('id', editingTaskId);
-    cancelEditTask();
-    fetchData();
-  };
-
-  const getBlockingTask = (task: Task): Task | null => {
-    if (!task.depends_on_task_id) return null;
-    const dep = tasks.find(t => t.id === task.depends_on_task_id);
-    if (!dep || dep.status === 'סיימתי') return null;
-    return dep;
-  };
-
-  const buildCelebration = () => {
-    const COLORS = ['#ff3b6b', '#ffd23f', '#3ddbff', '#7cf86b', '#ff7ee5', '#ff9533', '#9b6bff', '#5af0c2', '#ff5577'];
-    const BALLOON_EMOJIS = ['🎈', '🎈', '🎈', '🎉', '🎊'];
-    const fireworks = Array.from({ length: 16 }).map(() => {
-      const color = COLORS[Math.floor(Math.random() * COLORS.length)];
-      const particleCount = 14 + Math.floor(Math.random() * 6);
-      const baseDistance = 90 + Math.random() * 80;
-      const particles = Array.from({ length: particleCount }).map((_, i) => {
-        const angle = (i / particleCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
-        const distance = baseDistance * (0.7 + Math.random() * 0.6);
-        return {
-          fx: Math.cos(angle) * distance,
-          fy: Math.sin(angle) * distance,
-          size: 6 + Math.floor(Math.random() * 6),
-        };
-      });
-      return {
-        top: 10 + Math.random() * 70,
-        left: 8 + Math.random() * 84,
-        delay: Math.random() * 1800,
-        color,
-        particles,
-      };
-    });
-    const balloons = Array.from({ length: 8 }).map(() => ({
-      left: 5 + Math.random() * 90,
-      delay: Math.random() * 1200,
-      bx: (Math.random() - 0.5) * 120,
-      br: (Math.random() - 0.5) * 30,
-      emoji: BALLOON_EMOJIS[Math.floor(Math.random() * BALLOON_EMOJIS.length)],
-    }));
-    return { fireworks, balloons };
-  };
-
-  const updateTaskStatus = async (id: string, newStatus: string) => {
-    if (newStatus === 'סיימתי') {
-      setPoofingTaskId(id);
-      setCelebration(buildCelebration());
-      // Persist in background while the animation plays.
-      supabase.from('tasks').update({ status: newStatus }).eq('id', id).then(() => {});
-      window.setTimeout(() => {
-        setTasks(prev => prev.map(t => t.id === id ? { ...t, status: newStatus } : t));
-      }, 1500);
-      window.setTimeout(() => {
-        setPoofingTaskId(null);
-        setCelebration(null);
-      }, 3200);
-      return;
-    }
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, status: newStatus } : t));
-    await supabase.from('tasks').update({ status: newStatus }).eq('id', id);
-  };
-
-  const handleRestoreTask = async (id: string, newDate: string) => {
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, status: 'לא התחלתי', target_date: newDate } : t));
-    await supabase.from('tasks').update({ status: 'לא התחלתי', target_date: newDate }).eq('id', id);
-  };
-
-  const deleteTask = async (id: string) => {
-    if (confirm('למחוק את המשימה לתמיד?')) {
-      setTasks(prev => prev.filter(t => t.id !== id));
-      await supabase.from('tasks').delete().eq('id', id);
-    }
-  };
-
-  // --- Equipment functions ---
-  const resetPacking = async (listType: string) => {
-    await supabase.from('equipment_items').update({ is_packed: false }).eq('list_type', listType);
-    setEquipmentItems(prev => prev.map(i => i.list_type === listType ? { ...i, is_packed: false } : i));
-    const todayStr = new Date().toISOString().split('T')[0];
-    await supabase.from('equipment_sessions').upsert({ list_type: listType, last_pack_date: todayStr, household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72' }, { onConflict: 'list_type,household_id' });
-  };
-
-  // Auto-reset the active equipment list when entering the view or switching
-  // tabs, if a day has passed since it was last marked.
-  useEffect(() => {
-    if (activeView !== 'TEMPLATES') return;
-    let cancelled = false;
-    (async () => {
-      const { data } = await supabase.from('equipment_sessions').select('*').eq('list_type', equipListType).single();
-      if (cancelled) return;
-      const todayStr = new Date().toISOString().split('T')[0];
-      if (data && data.last_pack_date !== todayStr) {
-        await resetPacking(equipListType);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [activeView, equipListType]);
-
-  const togglePacked = async (item: EquipmentItem) => {
-    const newPacked = !item.is_packed;
-    setEquipmentItems(prev => prev.map(i => i.id === item.id ? { ...i, is_packed: newPacked } : i));
-    await supabase.from('equipment_items').update({ is_packed: newPacked }).eq('id', item.id);
-    // Update session date
-    const todayStr = new Date().toISOString().split('T')[0];
-    await supabase.from('equipment_sessions').upsert({ list_type: item.list_type, last_pack_date: todayStr, household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72' }, { onConflict: 'list_type,household_id' });
-  };
-
-  const handleEquipmentUpdate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim()) return;
-    showStatus('מעבד...', false);
-    try {
-      const equipCats = Array.from(new Set([...EQUIP_CATEGORIES, ...equipmentItems.filter(i => i.list_type === equipListType).map(i => i.category)]));
-      const res = await fetch('/api/parse', { method: 'POST', body: JSON.stringify({ text: input, categories: equipCats, context: 'equipment' }) });
-      const data = await res.json();
-      if (data.items && data.items.length > 0) {
-        for (const item of data.items) {
-          const name = item.name || item.item_name || 'פריט';
-          const isRemoval = (item.quantity || 0) < 0 || item.removeAll;
-          if (isRemoval) {
-            const cleanName = name.replace(/^(את כל ה|כל ה|את ה|ה)/g, '').trim().toLowerCase();
-            const matches = equipmentItems.filter(i => i.list_type === equipListType && (i.item_name || '').toLowerCase().includes(cleanName));
-            for (const m of matches) {
-              setEquipmentItems(prev => prev.filter(i => i.id !== m.id));
-              await supabase.from('equipment_items').delete().eq('id', m.id);
-            }
-            if (matches.length === 0) showStatus(`לא מצאתי "${name}" ברשימה`, true);
-          } else {
-            const cat = item.category && equipCats.includes(item.category) ? item.category : 'ציוד נוסף';
-            if (data.new_categories) {
-              for (const nc of data.new_categories) {
-                if (!equipCats.includes(nc)) equipCats.push(nc);
-              }
-            }
-            const finalCat = item.category && [...equipCats, ...(data.new_categories || [])].includes(item.category) ? item.category : cat;
-            const { data: inserted } = await supabase.from('equipment_items').insert([{ item_name: name, category: finalCat, list_type: equipListType, is_packed: false, household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72' }]).select();
-            if (inserted) setEquipmentItems(prev => [...prev, ...inserted]);
-          }
-        }
-        showStatus('✅ עודכן!', true);
-      }
-      setInput('');
-    } catch { showStatus('❌ שגיאה בחיבור', true); }
-  };
-
-  const deleteEquipmentItem = async (item: EquipmentItem) => {
-    setEquipmentItems(prev => prev.filter(i => i.id !== item.id));
-    await supabase.from('equipment_items').delete().eq('id', item.id);
-  };
-
+  /* ---------------- derived ---------------- */
   const safeInventory = inventory || [];
   const safeShoppingList = shoppingList || [];
 
-  const filteredInventory = safeInventory
+  // Rows the parser could not classify stay in the DB with an 'uncertain'
+  // category; they are shown as cards and never listed as normal stock.
+  const isUncertain = (c: string) => c === 'uncertain' || c === 'לא ידוע';
+  const dbPending = safeInventory.filter(i => isUncertain(i.category));
+  const stockInventory = safeInventory.filter(i => !isUncertain(i.category));
+
+  const filteredInventory = stockInventory
     .filter(i => (i.item_name || '').includes(searchTerm) && (invFilter === 'הכל' || i.location === invFilter))
     .sort((a, b) => (a.item_name || '').localeCompare(b.item_name || '', 'he'));
 
@@ -1111,45 +350,36 @@ export default function HomePage() {
 
   const displayCategories = Array.from(new Set([
     ...categories,
-    ...safeInventory.map(i => i.category || 'כללי'),
-    ...safeShoppingList.map(s => s.category || 'כללי')
-  ])).filter(c => c !== 'uncertain' && c !== 'null');
+    ...stockInventory.map(i => i.category || 'כללי'),
+    ...safeShoppingList.map(s => s.category || 'כללי'),
+  ])).filter(c => c && c !== 'uncertain' && c !== 'null');
 
-  // Autocomplete pool: household history (shopping, inventory, templates) first,
-  // then the general supermarket catalog. Names are stripped of leading emoji and
-  // trailing "(N)" quantity so matching is clean.
-  const stripName = (n: string) => (n || '')
-    .replace(/^[^A-Za-z0-9֐-׿]+/, '')
-    .replace(/\s*\(\d+\)\s*$/, '')
-    .trim();
+  const pickCategories = displayCategories.filter(c => c !== 'כללי');
+
   const suggestionPool: string[] = (() => {
     const seen = new Set<string>();
     const out: string[] = [];
     const push = (raw: string) => {
       const clean = stripName(raw);
-      const key = clean.toLowerCase();
-      if (clean && !seen.has(key)) { seen.add(key); out.push(clean); }
+      const k = clean.toLowerCase();
+      if (clean && !seen.has(k)) { seen.add(k); out.push(clean); }
     };
     safeShoppingList.forEach(s => push(s.item_name || ''));
-    safeInventory.forEach(i => push(i.item_name || ''));
+    stockInventory.forEach(i => push(i.item_name || ''));
     shoppingTemplates.forEach(t => t.items.forEach(it => push(it.item_name || '')));
-    historyNames.forEach(push);   // anything that was ever on the list and left
+    historyNames.forEach(push);
     SUPERMARKET_ITEMS.forEach(push);
     return out;
   })();
 
-  // Multi-word entries from the pool double as the dictionary that keeps
-  // "דלי מגבונים" from being split into two items on a space-separated add.
-  const compoundNames: string[] = suggestionPool
-    .filter(n => n.trim().includes(' '))
-    .sort((a, b) => b.length - a.length);
+  // Multi-word names double as the dictionary that stops "דלי מגבונים" from
+  // being split into two items. Longest first, so a long name is not cut by a
+  // shorter one inside it.
+  const compoundNames = suggestionPool.filter(n => n.includes(' ')).sort((a, b) => b.length - a.length);
 
   const activeTasks = tasks.filter(t => t.status !== 'סיימתי');
   const completedTasks = tasks.filter(t => t.status === 'סיימתי');
 
-  const headerGradient = 'from-[var(--c-grad-a)] via-[var(--c-grad-b)] to-[var(--c-grad-c)]';
-
-  // Tab list is driven by the DB, so a new list_type shows up on its own.
   const DEFAULT_EQUIP_LISTS = ['חו"ל', 'סופ"ש', 'פסטיבלים וקמפינג'];
   const HIDDEN_EQUIP_LISTS = ['חד"כ'];
   const equipListTypes = Array.from(new Set([
@@ -1160,37 +390,881 @@ export default function HomePage() {
   const unpackedEquip = currentEquipItems.filter(i => !i.is_packed);
   const packedEquip = currentEquipItems.filter(i => i.is_packed);
   const equipCategories = Array.from(new Set([...EQUIP_CATEGORIES, ...currentEquipItems.map(i => i.category)])).filter(Boolean);
+  const unpackedVisible = equipmentItems.filter(i => !i.is_packed && !HIDDEN_EQUIP_LISTS.includes(i.list_type)).length;
+
+  /* ---------------- categories ---------------- */
+  const ensureCategory = async (cat: string) => {
+    if (!cat || cat === 'כללי' || categories.includes(cat)) return;
+    const { error } = await supabase.from('category_order').insert([{ category_name: cat, sort_order: 99 }]);
+    if (!error) setCategories(prev => Array.from(new Set([...prev, cat])));
+  };
+
+  const startRenameCategory = (cat: string) => { setEditingCategoryName(cat); setCategoryNameValue(cat); };
+
+  const saveRenameCategory = async (oldCat: string) => {
+    const newCat = categoryNameValue.trim();
+    setEditingCategoryName(null);
+    if (!newCat || newCat === oldCat) return;
+    // Every table that stores the category string has to move, or the old name
+    // reappears as a phantom heading derived from inventory.
+    const results = await Promise.all([
+      supabase.from('shopping_list').update({ category: newCat }).eq('category', oldCat),
+      supabase.from('inventory_items').update({ category: newCat }).eq('category', oldCat),
+      supabase.from('shopping_template_items').update({ category: newCat }).eq('category', oldCat),
+      supabase.from('category_order').update({ category_name: newCat }).eq('category_name', oldCat),
+    ]);
+    const err = results.map(r => (r as any).error).find(Boolean);
+    if (failed(err, 'שינוי שם הקטגוריה')) return;
+    setCategories(prev => Array.from(new Set(prev.map(c => (c === oldCat ? newCat : c)))));
+    await fetchData();
+    showNote('ok', `הקטגוריה שונתה ל"${newCat}"`);
+  };
+
+  const deleteCategory = async (cat: string) => {
+    if (!confirm(`למחוק את הקטגוריה "${cat}"? הפריטים שבה יעברו ל"כללי" ולא יימחקו.`)) return;
+    const results = await Promise.all([
+      supabase.from('shopping_list').update({ category: 'כללי' }).eq('category', cat),
+      supabase.from('inventory_items').update({ category: 'כללי' }).eq('category', cat),
+      supabase.from('shopping_template_items').update({ category: null }).eq('category', cat),
+      supabase.from('category_order').delete().eq('category_name', cat),
+    ]);
+    const err = results.map(r => (r as any).error).find(Boolean);
+    if (failed(err, 'מחיקת הקטגוריה')) return;
+    setCategories(prev => prev.filter(c => c !== cat));
+    await fetchData();
+    showNote('ok', `הקטגוריה "${cat}" נמחקה`);
+  };
+
+  const guessCategories = async (names: string[]): Promise<Record<string, string>> => {
+    const guesses: Record<string, string> = {};
+    const clean = names.map(n => (n || '').trim()).filter(Boolean);
+    if (!clean.length) return guesses;
+    const data = await parseJson({ text: clean.join(', '), categories });
+    for (const it of ((data && data.items) || []) as any[]) {
+      const itemName = (it.name || it.item_name || '').trim();
+      const raw = (it.category || '').toString();
+      const usable = raw && !['uncertain', 'null', 'לא ידוע'].includes(raw.toLowerCase()) && !it.needs_classification;
+      if (itemName && usable) guesses[normKey(itemName)] = raw;
+    }
+    return guesses;
+  };
+
+  /* ---------------- inventory ---------------- */
+  const updateExactQuantity = async (item: Item, newQty: number) => {
+    const finalQty = Math.max(0, Math.min(999, newQty));
+    if (finalQty === item.quantity) return;
+    const now = new Date().toISOString();
+    setInventory(prev => prev.map(i => (i.id === item.id ? { ...i, quantity: finalQty, updated_at: now } : i)));
+    const { error } = await supabase.from('inventory_items').update({ quantity: finalQty, updated_at: now }).eq('id', item.id);
+    if (failed(error, 'עדכון הכמות')) { await fetchData(); return; }
+
+    if (finalQty <= 2 && finalQty < item.quantity) {
+      const already = safeShoppingList.some(s => normKey(s.item_name || '') === normKey(item.item_name));
+      if (!already) setLowStockAlerts(prev => [...prev.filter(i => i.id !== item.id), { ...item, quantity: finalQty }]);
+    }
+  };
+
+  const updateInventoryField = async (item: Item, field: string, value: any) => {
+    if ((item as any)[field] === value) return;
+    setInventory(prev => prev.map(i => (i.id === item.id ? { ...i, [field]: value } : i)));
+    const { error } = await supabase.from('inventory_items').update({ [field]: value }).eq('id', item.id);
+    if (failed(error, 'העדכון')) await fetchData();
+  };
+
+  const deleteInventoryItem = async (item: Item) => {
+    if (!confirm(`למחוק לצמיתות את "${item.item_name}"?`)) return;
+    setInventory(prev => prev.filter(i => i.id !== item.id));
+    await rememberItemName(item.item_name);
+    const { error } = await supabase.from('inventory_items').delete().eq('id', item.id);
+    if (failed(error, 'המחיקה')) await fetchData();
+  };
+
+  /* ---------------- shopping history ---------------- */
+  // The unique index is on lower(item_name), which no onConflict target can
+  // name — so insert plainly and treat a duplicate as success.
+  const rememberItemName = async (rawName: string) => {
+    const name = stripName(rawName || '');
+    if (!name) return;
+    if (historyNames.some(n => n.toLowerCase() === name.toLowerCase())) return;
+    setHistoryNames(prev => (prev.some(n => n.toLowerCase() === name.toLowerCase()) ? prev : [...prev, name]));
+    const { error } = await supabase.from('shopping_history')
+      .insert([{ item_name: name, household_id: HOUSEHOLD, last_used: new Date().toISOString() }]);
+    if (error && (error as any).code !== '23505') {
+      // A real failure (not "already there") — keep it quiet but do not pretend
+      // the local cache is authoritative.
+      setHistoryNames(prev => prev.filter(n => n.toLowerCase() !== name.toLowerCase()));
+    }
+  };
+
+  /* ---------------- shopping ---------------- */
+  const addShoppingRow = async (name: string, category: string, categoryAuto: boolean) => {
+    await ensureCategory(category);
+    const { error } = await supabase.from('shopping_list')
+      .insert([{ item_name: name, category, category_auto: categoryAuto }]);
+    return error;
+  };
+
+  const deleteShoppingItem = async (shopItem: any, skipConfirm = false) => {
+    if (!skipConfirm && !confirm(`למחוק את "${shopItem.item_name}" מהרשימה?`)) return;
+    setShoppingList(prev => prev.filter(i => i.id !== shopItem.id));
+    await rememberItemName(shopItem.item_name);
+    const { error } = await supabase.from('shopping_list').delete().eq('id', shopItem.id);
+    if (failed(error, 'המחיקה')) await fetchData();
+  };
+
+  const moveShoppingToInventory = async (shopItem: any, qty: number) => {
+    const key = normKey(shopItem.item_name || '');
+    const existing = stockInventory.find(i => normKey(i.item_name || '') === key);
+    const now = new Date().toISOString();
+    let error: any = null;
+    if (existing) {
+      ({ error } = await supabase.from('inventory_items')
+        .update({ quantity: (existing.quantity || 0) + qty, updated_at: now }).eq('id', existing.id));
+    } else {
+      ({ error } = await supabase.from('inventory_items').insert([{
+        item_name: stripName(shopItem.item_name) || shopItem.item_name,
+        quantity: qty, category: shopItem.category || 'כללי',
+        location: 'מזווה', updated_at: now, household_id: HOUSEHOLD,
+      }]));
+    }
+    if (failed(error, 'ההעברה למלאי')) return;
+    await rememberItemName(shopItem.item_name);
+    const { error: delErr } = await supabase.from('shopping_list').delete().eq('id', shopItem.id);
+    if (failed(delErr, 'הסרה מהקניות')) return;
+    await fetchData();
+    showNote('ok', `${stripName(shopItem.item_name)} הועבר למלאי`);
+  };
+
+  const addToShopping = async (item: Item) => {
+    const err = await addShoppingRow(item.item_name || 'פריט', item.category || 'כללי', false);
+    if (failed(err, 'ההוספה לקניות')) return;
+    setLowStockAlerts(prev => prev.filter(i => i.id !== item.id));
+    showNote('ok', 'נוסף לקניות');
+    await fetchData();
+  };
+
+  // A multi-word name whose individual words are themselves known products
+  // gets a "which did you mean?" card instead of being added blindly.
+  const findWordChoices = (name: string): string[] => {
+    const stripPrefix = (w: string) => w.replace(/^(ה|ב|ל|מ|ש|ו|כ)/, '');
+    const words = normKey(name).split(/\s+/).filter(w => w.length > 1);
+    if (words.length < 2) return [];
+    const known = new Set<string>();
+    stockInventory.forEach(i => known.add(normKey(i.item_name || '')));
+    safeShoppingList.forEach(s => known.add(normKey(s.item_name || '')));
+    const out: string[] = [];
+    for (const w of words) {
+      for (const c of [w, stripPrefix(w)]) {
+        if (c.length > 1 && known.has(c) && !out.includes(c)) out.push(c);
+      }
+    }
+    return out;
+  };
+
+  const splitShoppingInput = (text: string): string[] => {
+    const trimmed = (text || '').trim();
+    if (!trimmed) return [];
+    if (/[,،]/.test(trimmed)) return trimmed.split(/[,،]/).map(s => s.trim()).filter(Boolean);
+    const tokens = trimmed.split(/\s+/);
+    const items: string[] = [];
+    let i = 0;
+    while (i < tokens.length) {
+      let matched = false;
+      for (const compound of compoundNames) {
+        const parts = compound.split(/\s+/);
+        if (i + parts.length <= tokens.length) {
+          const slice = tokens.slice(i, i + parts.length).join(' ');
+          if (slice.toLowerCase() === compound.toLowerCase()) {
+            items.push(slice); i += parts.length; matched = true; break;
+          }
+        }
+      }
+      if (!matched) { items.push(tokens[i]); i++; }
+    }
+    return items;
+  };
+
+  const updateQuickAddRow = (idx: number, patch: Partial<{ name: string; category: string; newCategory: string }>) => {
+    setQuickAddRows(prev => {
+      const next = prev.map((r, i) => (i === idx ? { ...r, ...patch } : r));
+      if (idx === prev.length - 1 && next[idx].name.trim() && next.length < 20) next.push(emptyQuickAddRow());
+      return next;
+    });
+  };
+
+  const autoFillRowCategory = async (idx: number, rawName: string) => {
+    const name = (rawName || '').trim();
+    if (!name) return;
+    if (quickAddRows[idx]?.category) return;
+    setCatGuessingRow(idx);
+    try {
+      const guesses = await guessCategories([name]);
+      const guess = guesses[normKey(name)];
+      if (!guess) return;
+      // Only fill if this row still holds the same name and no manual pick —
+      // the form may have been submitted or retyped meanwhile.
+      setQuickAddRows(prev => prev.map((r, i) =>
+        (i === idx && !r.category && r.name.trim() === name) ? { ...r, category: guess } : r));
+      setCategories(prev => (prev.includes(guess) ? prev : [...prev, guess]));
+    } finally {
+      setCatGuessingRow(null);
+    }
+  };
+
+  const handleQuickAddSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (quickAddSubmitting) return;
+    const rows = quickAddRows.filter(r => r.name.trim());
+    if (!rows.length) return;
+    setQuickAddSubmitting(true);
+    showNote('info', 'מעבד…', false);
+
+    const picked = (r: { category: string; newCategory: string }) =>
+      (r.category === '__other__' ? r.newCategory.trim() : (r.category === '' ? '' : r.category));
+    const needGuess = rows.filter(r => !picked(r)).map(r => r.name.trim());
+    const guesses = needGuess.length ? await guessCategories(needGuess) : {};
+
+    const duplicates: string[] = [];
+    const choices: WordChoiceTask[] = [];
+    const summary: { name: string; category: string }[] = [];
+    const queued = new Set<string>();
+    let added = 0;
+    let hadError = false;
+
+    for (const row of rows) {
+      const name = row.name.trim();
+      const manual = picked(row);
+      const cat = manual || guesses[normKey(name)] || 'כללי';
+      const key = normKey(name);
+      if (!key || queued.has(key)) continue;
+      if (safeShoppingList.some(s => normKey(s.item_name || '') === key)) { duplicates.push(name); continue; }
+      const wc = findWordChoices(name);
+      if (wc.length) { choices.push({ originalName: name, options: wc, category: cat }); continue; }
+      queued.add(key);
+      const err = await addShoppingRow(name, cat, !manual);
+      if (err) { hadError = true; failed(err, `הוספת "${name}"`); continue; }
+      summary.push({ name, category: cat });
+      added++;
+    }
+
+    if (duplicates.length) setDuplicateShoppingAlerts(prev => Array.from(new Set([...prev, ...duplicates])));
+    if (choices.length) setWordChoiceTasks(prev => [...prev, ...choices]);
+    setAddedSummary(summary);
+
+    if (added > 0) setNote(null);
+    else if (choices.length) showNote('warn', 'איזה מהמוצרים התכוונת?', false);
+    else if (duplicates.length) showNote('warn', 'כבר ברשימה');
+    else if (!hadError) setNote(null);
+
+    setQuickAddRows([emptyQuickAddRow(), emptyQuickAddRow()]);
+    setQuickAddSubmitting(false);
+    await fetchData();
+  };
+
+  const handleCategoryAdd = async (e: React.FormEvent, category: string) => {
+    e.preventDefault();
+    const text = categoryAddInput.trim();
+    if (!text || categoryAddLoading) return;
+    setCategoryAddLoading(true);
+    const names = splitShoppingInput(text);
+    const duplicates: string[] = [];
+    const choices: WordChoiceTask[] = [];
+    const summary: { name: string; category: string }[] = [];
+    const queued = new Set<string>();
+    let added = 0;
+
+    for (const name of names) {
+      const key = normKey(name);
+      if (!key || queued.has(key)) continue;
+      if (safeShoppingList.some(s => normKey(s.item_name || '') === key)) { duplicates.push(name); continue; }
+      const wc = findWordChoices(name);
+      if (wc.length) { choices.push({ originalName: name, options: wc, category }); continue; }
+      queued.add(key);
+      const err = await addShoppingRow(name, category, false);
+      if (err) { failed(err, `הוספת "${name}"`); continue; }
+      summary.push({ name, category });
+      added++;
+    }
+
+    if (duplicates.length) setDuplicateShoppingAlerts(prev => Array.from(new Set([...prev, ...duplicates])));
+    if (choices.length) setWordChoiceTasks(prev => [...prev, ...choices]);
+    setAddedSummary(summary);
+    if (added === 0 && choices.length) showNote('warn', 'איזה מהמוצרים התכוונת?', false);
+    else if (added === 0 && duplicates.length) showNote('warn', 'כבר ברשימה');
+
+    setCategoryAddInput('');
+    setCategoryAddOpen(null);
+    setCategoryAddLoading(false);
+    await fetchData();
+  };
+
+  const handleResolveWordChoice = async (task: WordChoiceTask, chosen: string) => {
+    setWordChoiceTasks(prev => prev.filter(t => t !== task));
+    const key = normKey(chosen);
+    if (safeShoppingList.some(s => normKey(s.item_name || '') === key)) {
+      setDuplicateShoppingAlerts(prev => Array.from(new Set([...prev, chosen])));
+      showNote('warn', 'כבר ברשימה');
+      return;
+    }
+    const err = await addShoppingRow(chosen, task.category || 'כללי', false);
+    if (failed(err, 'ההוספה')) return;
+    setAddedSummary([{ name: chosen, category: task.category || 'כללי' }]);
+    await fetchData();
+  };
+
+  const openCategorize = () => { setCategorizeAssignments({}); setCategorizeNewCats({}); setShowCategorize(true); };
+
+  const applyCategorizeAssignments = async () => {
+    // Touching the dropdown at all counts as classifying — even picking כללי.
+    const entries = Object.entries(categorizeAssignments).filter(([, v]) => !!v);
+    if (!entries.length) { setShowCategorize(false); return; }
+    showNote('info', 'מעבד…', false);
+    let updated = 0;
+    for (const [id, chosen] of entries) {
+      let target = chosen;
+      if (chosen === '__other__') {
+        const custom = (categorizeNewCats[id] || '').trim();
+        if (!custom) continue;
+        target = custom;
+        await ensureCategory(target);
+      }
+      const { error } = await supabase.from('shopping_list')
+        .update({ category: target, category_auto: false }).eq('id', id);
+      if (error) { failed(error, 'הסיווג'); continue; }
+      updated++;
+    }
+    setCategorizeAssignments({});
+    setCategorizeNewCats({});
+    setShowCategorize(false);
+    await fetchData();
+    showNote('ok', `סווגו ${updated} פריטים`);
+  };
+
+  /* ---------------- inventory free text ---------------- */
+  const executeRemoval = async (invItem: Item, qtyToSubtract: number, removeAll: boolean) => {
+    const newQty = removeAll ? 0 : (invItem.quantity || 0) + qtyToSubtract;
+    await updateExactQuantity(invItem, newQty);
+  };
+
+  const saveInventoryItem = async (name: string, cat: string, quantity: number, location: string) => {
+    await ensureCategory(cat);
+    const key = normKey(name);
+    const existing = stockInventory.find(i => normKey(i.item_name || '') === key);
+    const now = new Date().toISOString();
+    if (existing) {
+      return (await supabase.from('inventory_items')
+        .update({ quantity: Math.max(0, (existing.quantity || 0) + quantity), category: cat, updated_at: now })
+        .eq('id', existing.id)).error;
+    }
+    return (await supabase.from('inventory_items').insert([{
+      item_name: name, quantity: Math.max(0, quantity), category: cat,
+      location: location || 'מזווה', updated_at: now, household_id: HOUSEHOLD,
+    }])).error;
+  };
+
+  const handleInventoryUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!invInput.trim()) return;
+    showNote('info', 'מעבד…', false);
+    const data = await parseJson({ text: invInput, categories });
+    if (!data) return;
+
+    for (const nc of (data.new_categories || [])) await ensureCategory(nc);
+
+    const items = data.items || [];
+    if (!items.length) { showNote('warn', 'לא זוהו פריטים'); return; }
+
+    const ambiguous: DisambiguationTask[] = [];
+    const uncertain: any[] = [];
+    const notFound: string[] = [];
+    // A local mirror so two removals of the same row do not each read the
+    // pre-loop quantity and lose a decrement.
+    const working = stockInventory.map(i => ({ ...i }));
+    let moved = 0;
+    let saved = 0;
+
+    for (const item of items) {
+      const name = item.name || item.item_name || 'פריט';
+      const isRemoval = (item.quantity || 0) < 0 || item.removeAll;
+      const cat = (item.category || '').toLowerCase();
+      const clean = name.replace(/^(את כל ה|כל ה|את ה|ה)/g, '').trim().toLowerCase();
+
+      if (item.moveToCategory) {
+        const matches = working.filter(i => (i.item_name || '').toLowerCase().includes(clean));
+        for (const m of matches) {
+          const { error } = await supabase.from('inventory_items').update({ category: item.moveToCategory }).eq('id', m.id);
+          if (!error) moved++;
+        }
+        if (!matches.length) notFound.push(name);
+      } else if (isRemoval) {
+        const matches = working.filter(i => (i.item_name || '').toLowerCase().includes(clean));
+        const exact = matches.find(i => (i.item_name || '').toLowerCase() === clean);
+        if (matches.length === 1 || (exact && matches.length === 1)) {
+          await executeRemoval(matches[0], item.quantity, item.removeAll);
+          const idx = working.findIndex(w => w.id === matches[0].id);
+          if (idx >= 0) working[idx].quantity = item.removeAll ? 0 : Math.max(0, (working[idx].quantity || 0) + item.quantity);
+        } else if (matches.length > 1) {
+          ambiguous.push({ originalName: name, matches, quantityToSubtract: item.quantity, removeAll: item.removeAll });
+        } else {
+          notFound.push(name);
+        }
+      } else if (item.needs_classification || isUncertain(cat) || cat === 'null' || !cat) {
+        uncertain.push({ ...item, item_name: name });
+      } else {
+        const err = await saveInventoryItem(name, item.category, item.quantity || 1, item.location);
+        if (err) failed(err, `שמירת "${name}"`);
+        else {
+          saved++;
+          const idx = working.findIndex(w => normKey(w.item_name || '') === normKey(name));
+          if (idx >= 0) working[idx].quantity = (working[idx].quantity || 0) + (item.quantity || 1);
+          else working.push({ id: `tmp-${name}`, item_name: name, quantity: item.quantity || 1, category: item.category, location: item.location || 'מזווה' });
+        }
+      }
+    }
+
+    if (ambiguous.length) setDisambiguationItems(prev => [...prev, ...ambiguous]);
+    if (uncertain.length) setLocalPending(prev => [...prev, ...uncertain]);
+
+    const parts: string[] = [];
+    if (saved) parts.push(`נשמרו ${saved}`);
+    if (moved) parts.push(`הועברו ${moved}`);
+    if (notFound.length) parts.push(`לא נמצאו: ${notFound.join(', ')}`);
+    if (ambiguous.length) parts.push('יש כמה אפשרויות');
+    if (uncertain.length) parts.push('נדרש סיווג');
+    showNote(notFound.length || ambiguous.length || uncertain.length ? 'warn' : 'ok',
+      parts.join(' · ') || 'עודכן', !(ambiguous.length || uncertain.length));
+
+    setInvInput('');
+    await fetchData();
+  };
+
+  // A DB row parked on 'uncertain' is UPDATEd in place; a freshly parsed item
+  // with no row yet is inserted.
+  const resolveDbPending = async (item: Item, cat: string) => {
+    await ensureCategory(cat);
+    const { error } = await supabase.from('inventory_items').update({ category: cat }).eq('id', item.id);
+    if (failed(error, 'הסיווג')) return;
+    await fetchData();
+    showNote('ok', `"${item.item_name}" סווג ל"${cat}"`);
+  };
+
+  const resolveLocalPending = async (item: any, cat: string) => {
+    setLocalPending(prev => prev.filter(p => p !== item));
+    const err = await saveInventoryItem(item.item_name || item.name, cat, item.quantity || 1, item.location);
+    if (failed(err, 'השמירה')) return;
+    await fetchData();
+    showNote('ok', `"${item.item_name || item.name}" נשמר ב"${cat}"`);
+  };
+
+  const handleResolveDisambiguation = async (task: DisambiguationTask, chosen: Item | 'ALL') => {
+    if (chosen === 'ALL') for (const m of task.matches) await executeRemoval(m, task.quantityToSubtract, task.removeAll);
+    else await executeRemoval(chosen, task.quantityToSubtract, task.removeAll);
+    setDisambiguationItems(prev => prev.filter(t => t !== task));
+    showNote('ok', 'המלאי עודכן');
+  };
+
+  /* ---------------- row editing ---------------- */
+  const saveEditedName = async (id: string, table: string) => {
+    const v = editNameValue.trim();
+    setEditingId(null);
+    if (!v) return;
+    const { error } = await supabase.from(table).update({ item_name: v }).eq('id', id);
+    if (failed(error, 'שינוי השם')) return;
+    await fetchData();
+  };
+
+  const saveEditedCategory = async (id: string, table: string, directValue?: string) => {
+    const val = (directValue || editCatValue).trim();
+    setEditingCatItemId(null);
+    if (!val) return;
+    await ensureCategory(val);
+    const patch: any = { category: val };
+    if (table === 'shopping_list') patch.category_auto = false;
+    const { error } = await supabase.from(table).update(patch).eq('id', id);
+    if (failed(error, 'שינוי הקטגוריה')) return;
+    await fetchData();
+  };
+
+  /* ---------------- tasks ---------------- */
+  const urgencyIcon = (u: string) => (u === 'דחופה מאד' ? '🚨' : u === 'גבוהה' ? '🔥' : u === 'נמוכה' ? '💤' : '📋');
+  const urgencyTone = (u: string) =>
+    u === 'דחופה מאד' ? 'var(--st-danger)' : u === 'גבוהה' ? 'var(--st-warn)' : u === 'נמוכה' ? 'var(--c-acc1)' : 'var(--c-acc3)';
+
+  const buildWhatsAppLink = (t: Task) => {
+    let text = `*משימה חדשה: ${t.title}*\n`;
+    if (t.description) text += `${t.description}\n`;
+    text += `\n*באחריות:* ${t.assignee}`;
+    text += `\n*תאריך יעד:* ${fmtDate(t.target_date)}`;
+    text += `\n*דחיפות:* ${t.urgency}`;
+    return `https://wa.me/?text=${encodeURIComponent(text)}`;
+  };
+
+  const persistNewTask = async (sendToWhatsApp: boolean) => {
+    if (!newTask.title.trim()) { showNote('warn', 'חסר שם למשימה'); return; }
+    const { error } = await supabase.from('tasks').insert([newTask]);
+    if (failed(error, 'שמירת המשימה')) return;
+    const copy = { ...newTask };
+    setNewTask({ title: '', description: '', urgency: 'סטנדרטית', assignee: 'כולם', target_date: today, status: 'לא התחלתי', depends_on_task_id: null });
+    setShowTaskForm(false);
+    await fetchData();
+    showNote('ok', 'המשימה נשמרה');
+    if (sendToWhatsApp) window.open(buildWhatsAppLink(copy), '_blank', 'noopener');
+  };
+
+  const startEditTask = (task: Task, focus: EditTaskFocus = 'all') => {
+    if (editingTaskId === task.id) {
+      if (focus === 'all') { setEditingTaskId(null); setEditTaskDraft(null); }
+      else setEditTaskFocus(focus);
+      return;
+    }
+    setEditingTaskId(task.id || null);
+    setEditTaskDraft({ ...task, depends_on_task_id: task.depends_on_task_id || null });
+    setEditTaskFocus(focus);
+  };
+
+  const cancelEditTask = () => { setEditingTaskId(null); setEditTaskDraft(null); setEditTaskFocus('all'); };
+
+  // Walk the dependency chain so A→B→A cannot deadlock both tasks.
+  const wouldCycle = (taskId: string, depId: string | null): boolean => {
+    let cur = depId;
+    const seen = new Set<string>();
+    while (cur) {
+      if (cur === taskId) return true;
+      if (seen.has(cur)) return false;
+      seen.add(cur);
+      cur = tasks.find(t => t.id === cur)?.depends_on_task_id || null;
+    }
+    return false;
+  };
+
+  const saveEditTask = async () => {
+    if (!editingTaskId || !editTaskDraft) return;
+    if (wouldCycle(editingTaskId, editTaskDraft.depends_on_task_id || null)) {
+      showNote('danger', 'התלות הזאת יוצרת מעגל — שתי המשימות ייחסמו זו בזו', false);
+      return;
+    }
+    const updates = {
+      title: editTaskDraft.title,
+      description: editTaskDraft.description || '',
+      urgency: editTaskDraft.urgency,
+      assignee: editTaskDraft.assignee,
+      target_date: editTaskDraft.target_date,
+      depends_on_task_id: editTaskDraft.depends_on_task_id || null,
+    };
+    setTasks(prev => prev.map(t => (t.id === editingTaskId ? { ...t, ...updates } : t)));
+    const { error } = await supabase.from('tasks').update(updates).eq('id', editingTaskId);
+    if (failed(error, 'עדכון המשימה')) { await fetchData(); return; }
+    cancelEditTask();
+    await fetchData();
+  };
+
+  const getBlockingTask = (task: Task): Task | null => {
+    if (!task.depends_on_task_id) return null;
+    const dep = tasks.find(t => t.id === task.depends_on_task_id);
+    if (!dep || dep.status === 'סיימתי') return null;
+    return dep;
+  };
+
+  const buildCelebration = () => {
+    const COLORS = ['#ff3b6b', '#ffd23f', '#3ddbff', '#7cf86b', '#ff7ee5', '#ff9533', '#9b6bff', '#5af0c2', '#ff2d8a'];
+    const BALLOONS = ['🎈', '🎈', '🎈', '🎉', '🎊'];
+    const fireworks = Array.from({ length: 12 }).map(() => {
+      const color = COLORS[Math.floor(Math.random() * COLORS.length)];
+      let color2 = COLORS[Math.floor(Math.random() * COLORS.length)];
+      while (color2 === color) color2 = COLORS[Math.floor(Math.random() * COLORS.length)];
+      const streakCount = 38 + Math.floor(Math.random() * 14);
+      const baseFly = 150 + Math.random() * 90;
+      const streaks = Array.from({ length: streakCount }).map((_, i) => ({
+        angle: (i / streakCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.18,
+        fly: baseFly * (0.75 + Math.random() * 0.55),
+        w: 70 + Math.floor(Math.random() * 40),
+        h: 3 + Math.floor(Math.random() * 2),
+      }));
+      const sparks = Array.from({ length: 18 + Math.floor(Math.random() * 8) }).map(() => {
+        const a = Math.random() * Math.PI * 2;
+        const d = 30 + Math.random() * 130;
+        return { sx: Math.cos(a) * d, sy: Math.sin(a) * d, size: 4 + Math.floor(Math.random() * 5), delay: Math.random() * 250 };
+      });
+      return { top: 10 + Math.random() * 60, left: 8 + Math.random() * 84, delay: 200 + Math.random() * 1800, color, color2, streaks, sparks };
+    });
+    const balloons = Array.from({ length: 8 }).map(() => ({
+      left: 5 + Math.random() * 90,
+      delay: Math.random() * 1200,
+      bx: (Math.random() - 0.5) * 120,
+      br: (Math.random() - 0.5) * 30,
+      emoji: BALLOONS[Math.floor(Math.random() * BALLOONS.length)],
+    }));
+    return { fireworks, balloons };
+  };
+
+  const updateTaskStatus = async (id: string, newStatus: string) => {
+    if (newStatus === 'סיימתי') {
+      setPoofingIds(prev => [...prev, id]);
+      setCelebration(buildCelebration());
+      const { error } = await supabase.from('tasks').update({ status: newStatus }).eq('id', id);
+      if (error) {
+        setPoofingIds(prev => prev.filter(p => p !== id));
+        setCelebration(null);
+        failed(error, 'סימון המשימה');
+        return;
+      }
+      // Move the card as soon as its own animation ends; the celebration keeps
+      // playing over a live, interactive list.
+      celebTimers.current.push(window.setTimeout(() => {
+        setTasks(prev => prev.map(t => (t.id === id ? { ...t, status: newStatus } : t)));
+        setPoofingIds(prev => prev.filter(p => p !== id));
+      }, 1200));
+      celebTimers.current.push(window.setTimeout(() => setCelebration(null), 4200));
+      return;
+    }
+    setTasks(prev => prev.map(t => (t.id === id ? { ...t, status: newStatus } : t)));
+    const { error } = await supabase.from('tasks').update({ status: newStatus }).eq('id', id);
+    if (failed(error, 'עדכון הסטטוס')) await fetchData();
+  };
+
+  const handleRestoreTask = async (id: string, newDate: string) => {
+    setTasks(prev => prev.map(t => (t.id === id ? { ...t, status: 'לא התחלתי', target_date: newDate } : t)));
+    const { error } = await supabase.from('tasks').update({ status: 'לא התחלתי', target_date: newDate }).eq('id', id);
+    if (failed(error, 'השחזור')) await fetchData();
+  };
+
+  const deleteTask = async (task: Task) => {
+    if (!confirm(`למחוק לצמיתות את המשימה "${task.title}"?`)) return;
+    setTasks(prev => prev.filter(t => t.id !== task.id));
+    const { error } = await supabase.from('tasks').delete().eq('id', task.id);
+    if (failed(error, 'מחיקת המשימה')) await fetchData();
+  };
+
+  /* ---------------- equipment ---------------- */
+  const resetPacking = async (listType: string) => {
+    setEquipmentItems(prev => prev.map(i => (i.list_type === listType ? { ...i, is_packed: false } : i)));
+    const { error } = await supabase.from('equipment_items').update({ is_packed: false }).eq('list_type', listType);
+    if (failed(error, 'איפוס הרשימה')) { await fetchData(); return; }
+    await supabase.from('equipment_sessions')
+      .upsert({ list_type: listType, last_pack_date: localToday(), household_id: HOUSEHOLD }, { onConflict: 'list_type,household_id' });
+  };
+
+  useEffect(() => {
+    if (activeView !== 'TEMPLATES') return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.from('equipment_sessions').select('*').eq('list_type', equipListType).maybeSingle();
+      if (cancelled) return;
+      if (data && data.last_pack_date !== localToday()) await resetPacking(equipListType);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeView, equipListType]);
+
+  const togglePacked = async (item: EquipmentItem) => {
+    const next = !item.is_packed;
+    setEquipmentItems(prev => prev.map(i => (i.id === item.id ? { ...i, is_packed: next } : i)));
+    const { error } = await supabase.from('equipment_items').update({ is_packed: next }).eq('id', item.id);
+    if (failed(error, 'הסימון')) { await fetchData(); return; }
+    await supabase.from('equipment_sessions')
+      .upsert({ list_type: item.list_type, last_pack_date: localToday(), household_id: HOUSEHOLD }, { onConflict: 'list_type,household_id' });
+  };
+
+  const handleEquipmentUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!equipInput.trim()) return;
+    showNote('info', 'מעבד…', false);
+    const equipCats = Array.from(new Set([...EQUIP_CATEGORIES, ...currentEquipItems.map(i => i.category)]));
+    const data = await parseJson({ text: equipInput, categories: equipCats, context: 'equipment' });
+    if (!data) return;
+    const items = data.items || [];
+    if (!items.length) { showNote('warn', 'לא זוהו פריטים'); return; }
+
+    const notFound: string[] = [];
+    let addedCount = 0;
+    let removedCount = 0;
+
+    for (const item of items) {
+      const name = item.name || item.item_name || 'פריט';
+      const isRemoval = (item.quantity || 0) < 0 || item.removeAll;
+      if (isRemoval) {
+        const clean = name.replace(/^(את כל ה|כל ה|את ה|ה)/g, '').trim().toLowerCase();
+        const matches = currentEquipItems.filter(i => (i.item_name || '').toLowerCase().includes(clean));
+        for (const m of matches) {
+          setEquipmentItems(prev => prev.filter(i => i.id !== m.id));
+          const { error } = await supabase.from('equipment_items').delete().eq('id', m.id);
+          if (!error) removedCount++;
+        }
+        if (!matches.length) notFound.push(name);
+      } else {
+        const allowed = [...equipCats, ...(data.new_categories || [])];
+        const finalCat = item.category && allowed.includes(item.category) ? item.category : 'ציוד נוסף';
+        const { data: inserted, error } = await supabase.from('equipment_items')
+          .insert([{ item_name: name, category: finalCat, list_type: equipListType, is_packed: false, household_id: HOUSEHOLD }])
+          .select();
+        if (error) failed(error, `הוספת "${name}"`);
+        else { if (inserted) setEquipmentItems(prev => [...prev, ...(inserted as EquipmentItem[])]); addedCount++; }
+      }
+    }
+
+    const parts: string[] = [];
+    if (addedCount) parts.push(`נוספו ${addedCount}`);
+    if (removedCount) parts.push(`הוסרו ${removedCount}`);
+    if (notFound.length) parts.push(`לא נמצאו: ${notFound.join(', ')}`);
+    showNote(notFound.length ? 'warn' : 'ok', parts.join(' · ') || 'עודכן');
+    setEquipInput('');
+  };
+
+  const deleteEquipmentItem = async (item: EquipmentItem) => {
+    if (!confirm(`למחוק לצמיתות את "${item.item_name}"?`)) return;
+    setEquipmentItems(prev => prev.filter(i => i.id !== item.id));
+    const { error } = await supabase.from('equipment_items').delete().eq('id', item.id);
+    if (failed(error, 'המחיקה')) await fetchData();
+  };
+
+  /* ---------------- templates ---------------- */
+  const addTemplateToShopping = async (template: ShoppingTemplate) => {
+    if (addingTemplateId) return;
+    if (!template.items.length) { showNote('warn', 'הרשימה ריקה'); return; }
+    setAddingTemplateId(template.id);
+    showNote('info', 'מעבד…', false);
+
+    const list = template.items
+      .map(i => ({ name: i.item_name.trim(), category: (i.category || '').trim() }))
+      .filter(i => i.name);
+    const needGuess = list.filter(i => !i.category).map(i => i.name);
+    const guesses = needGuess.length ? await guessCategories(needGuess) : {};
+
+    const duplicates: string[] = [];
+    const summary: { name: string; category: string }[] = [];
+    const queued = new Set<string>();
+    let added = 0;
+
+    for (const it of list) {
+      const key = normKey(it.name);
+      if (!key || queued.has(key)) continue;
+      if (safeShoppingList.some(s => normKey(s.item_name || '') === key)) { duplicates.push(it.name); continue; }
+      queued.add(key);
+      const cat = it.category || guesses[key] || 'כללי';
+      const err = await addShoppingRow(it.name, cat, !it.category);
+      if (err) { failed(err, `הוספת "${it.name}"`); continue; }
+      summary.push({ name: it.name, category: cat });
+      added++;
+    }
+
+    if (duplicates.length) setDuplicateShoppingAlerts(prev => Array.from(new Set([...prev, ...duplicates])));
+    setAddedSummary(summary);
+    if (added > 0) setNote(null);
+    else if (duplicates.length) showNote('warn', 'כל הפריטים כבר ברשימה');
+    setAddingTemplateId(null);
+    await fetchData();
+  };
+
+  const createTemplate = async () => {
+    const name = newTemplateName.trim();
+    const items = newTemplateItemsText.split('\n').map(l => l.trim()).filter(Boolean);
+    if (!name) { showNote('warn', 'חסר שם לרשימה'); return; }
+    if (!items.length) { showNote('warn', 'אין פריטים ברשימה'); return; }
+    const { data: inserted, error } = await supabase.from('shopping_templates')
+      .insert([{ name, household_id: HOUSEHOLD }]).select().single();
+    if (failed(error, 'יצירת הרשימה') || !inserted) return;
+    const { error: itemsErr } = await supabase.from('shopping_template_items')
+      .insert(items.map((item_name, idx) => ({ template_id: (inserted as any).id, item_name, sort_order: idx + 1 })));
+    if (failed(itemsErr, 'שמירת הפריטים')) return;
+    setNewTemplateName(''); setNewTemplateItemsText(''); setShowCreateTemplate(false);
+    showNote('ok', `נוצרה הרשימה "${name}"`);
+    await fetchData();
+  };
+
+  const deleteTemplate = async (template: ShoppingTemplate) => {
+    if (!confirm(`למחוק את הרשימה "${template.name}" לצמיתות?`)) return;
+    const { error } = await supabase.from('shopping_templates').delete().eq('id', template.id);
+    if (failed(error, 'מחיקת הרשימה')) return;
+    showNote('ok', `הרשימה "${template.name}" נמחקה`);
+    await fetchData();
+  };
+
+  /* ================================================================== *
+   * render
+   * ================================================================== */
+  const NAV: { view: View; icon: string; label: string; badge?: number }[] = [
+    { view: 'HOME', icon: 'home', label: 'בית' },
+    { view: 'INVENTORY', icon: 'box', label: 'מלאי' },
+    { view: 'SHOPPING', icon: 'cart', label: 'קניות', badge: safeShoppingList.length },
+    { view: 'TEMPLATES', icon: 'suitcase', label: 'רשימות', badge: unpackedVisible },
+    { view: 'TASKS', icon: 'pin', label: 'משימות', badge: activeTasks.length },
+  ];
+
+  const viewTitle: Record<View, string> = {
+    HOME: 'הבית של ניאו', INVENTORY: 'מלאי', SHOPPING: 'קניות',
+    TASKS: 'משימות', TEMPLATES: 'רשימות', SETTINGS: 'הגדרות',
+  };
+
+  const noteClass = note ? `note note-${note.kind}` : 'note';
 
   return (
-    <main data-theme={appTheme} data-font={appFont} className="min-h-screen bg-[var(--c-bg)] pb-20 text-[var(--c-ink)] transition-colors duration-500" dir="rtl">
+    <main
+      data-theme={appTheme}
+      data-font={appFont}
+      dir="rtl"
+      className="min-h-screen pb-28"
+    >
+      <div className="paper" aria-hidden="true" />
+      <div className="grain" aria-hidden="true" />
+
+      {/* ---------- celebration ---------- */}
       {celebration && (
-        <div className="fixed inset-0 z-[2000] pointer-events-none overflow-hidden">
+        <div className="fixed inset-0 z-[2000] pointer-events-none overflow-hidden" aria-hidden="true">
           {celebration.fireworks.map((fw, i) => (
             <div key={`fw-${i}`} className="absolute" style={{ top: `${fw.top}%`, left: `${fw.left}%` }}>
               <span
-                className="absolute rounded-full animate-firework-flash"
+                className="absolute fw-launch"
                 style={{
-                  width: '14px',
-                  height: '14px',
-                  background: `radial-gradient(circle, #fff 0%, ${fw.color} 60%, transparent 100%)`,
-                  boxShadow: `0 0 30px 8px ${fw.color}`,
-                  animationDelay: `${fw.delay}ms`,
-                  top: 0,
-                  left: 0,
+                  width: 4, height: 90, top: 0, left: 0, borderRadius: 4,
+                  background: `linear-gradient(to top, transparent, ${fw.color} 60%, #fff)`,
+                  boxShadow: `0 0 14px ${fw.color}`, transformOrigin: '50% 100%',
+                  animationDelay: `${Math.max(0, fw.delay - 600)}ms`,
                 }}
               />
-              {fw.particles.map((p, pi) => (
+              <span
+                className="absolute rounded-full fw-flash"
+                style={{
+                  width: 24, height: 24, top: 0, left: 0,
+                  background: 'radial-gradient(circle, #fff 0%, #fff 30%, transparent 80%)',
+                  boxShadow: `0 0 50px 16px #fff, 0 0 90px 30px ${fw.color}`,
+                  animationDelay: `${fw.delay}ms`,
+                }}
+              />
+              <span
+                className="absolute rounded-full fw-flash"
+                style={{
+                  width: 60, height: 60, top: 0, left: 0, opacity: .7,
+                  background: `radial-gradient(circle, ${fw.color} 0%, ${fw.color2} 50%, transparent 80%)`,
+                  boxShadow: `0 0 60px 20px ${fw.color}`,
+                  animationDelay: `${fw.delay + 30}ms`,
+                }}
+              />
+              {fw.streaks.map((s, si) => (
                 <span
-                  key={pi}
-                  className="absolute rounded-full animate-firework-particle"
+                  key={si}
+                  className="absolute fw-streak"
                   style={{
-                    width: `${p.size}px`,
-                    height: `${p.size}px`,
-                    backgroundColor: fw.color,
+                    top: 0, left: 0, width: s.w, height: s.h, borderRadius: 999,
+                    background: `linear-gradient(to right, transparent, ${fw.color} 35%, ${fw.color} 70%, #fff)`,
                     boxShadow: `0 0 12px ${fw.color}, 0 0 4px #fff`,
+                    transformOrigin: '0 50%',
                     animationDelay: `${fw.delay}ms`,
-                    ['--fx' as any]: `${p.fx}px`,
-                    ['--fy' as any]: `${p.fy}px`,
+                    ['--angle' as any]: `${s.angle}rad`,
+                    ['--fly' as any]: `${s.fly}px`,
+                  }}
+                />
+              ))}
+              {fw.sparks.map((sp, spi) => (
+                <span
+                  key={`s${spi}`}
+                  className="absolute rounded-full fw-spark"
+                  style={{
+                    top: 0, left: 0, width: sp.size, height: sp.size,
+                    background: `radial-gradient(circle, #fff 10%, ${fw.color2} 70%)`,
+                    boxShadow: `0 0 ${sp.size * 2}px ${fw.color}, 0 0 4px #fff`,
+                    animationDelay: `${fw.delay + sp.delay}ms`,
+                    ['--sx' as any]: `${sp.sx}px`,
+                    ['--sy' as any]: `${sp.sy}px`,
                   }}
                 />
               ))}
@@ -1199,10 +1273,9 @@ export default function HomePage() {
           {celebration.balloons.map((b, i) => (
             <span
               key={`bl-${i}`}
-              className="absolute text-5xl animate-balloon-rise"
+              className="absolute balloon"
               style={{
-                left: `${b.left}%`,
-                bottom: 0,
+                left: `${b.left}%`, bottom: 0, fontSize: 46,
                 animationDelay: `${b.delay}ms`,
                 ['--bx' as any]: `${b.bx}px`,
                 ['--br' as any]: `${b.br}deg`,
@@ -1211,1169 +1284,1330 @@ export default function HomePage() {
           ))}
         </div>
       )}
-      <header className={`bg-gradient-to-r ${headerGradient} header-flow text-white shadow-xl sticky top-0 z-[1000] transition-colors duration-500`}>
-        <div className="max-w-2xl mx-auto p-4 flex flex-col gap-3">
-          <div className="flex justify-between items-center relative">
-            <h1 className="text-2xl font-black cursor-pointer drop-shadow-md" onClick={() => changeView('HOME')}>הבית של ניאו 🏠</h1>
-            <div className="flex items-center gap-2">
-              {activeView !== 'HOME' && <button onClick={() => setIsSearchOpen(!isSearchOpen)} className="p-2 rounded-xl bg-black/10 hover:bg-black/20 font-black flex items-center justify-center text-lg" title="חפש">🔍</button>}
-              <button onClick={handleRefresh} className="p-2 rounded-xl bg-black/10 hover:bg-black/20 font-black flex items-center justify-center text-lg" title="רענן עמוד">🔄</button>
-              <div className="relative">
-                <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="px-3 py-2 rounded-xl bg-black/20 hover:bg-black/30 font-bold tracking-wide shadow-inner flex items-center gap-2">
-                  <span>☰</span> תפריט
-                </button>
-                {isMenuOpen && (
-                  <div className="absolute left-0 top-12 w-48 bg-white rounded-2xl shadow-2xl border border-[var(--c-line)] overflow-hidden flex flex-col text-slate-800 z-[1001] animate-in fade-in slide-in-from-top-2">
-                    <button className="p-4 text-right font-black hover:bg-teal-50 border-b flex justify-between" onClick={() => changeView('INVENTORY')}><span>מלאי</span><span>📦</span></button>
-                    <button className="p-4 text-right font-black hover:bg-rose-50 border-b flex justify-between" onClick={() => changeView('SHOPPING')}><span>קניות</span><span>🛒</span></button>
-                    <button className="p-4 text-right font-black hover:bg-amber-50 border-b flex justify-between" onClick={() => changeView('TEMPLATES')}><span>רשימות</span><span>📝</span></button>
-                    <button className="p-4 text-right font-black hover:bg-purple-50 border-b flex justify-between" onClick={() => changeView('TASKS')}><span>משימות</span><span>📌</span></button>
-                    <button className="p-4 text-right font-black hover:bg-[var(--c-soft)] flex justify-between" onClick={() => changeView('SETTINGS')}><span>הגדרות</span><span>⚙️</span></button>
-                  </div>
-                )}
+
+      {/* ---------- header ---------- */}
+      <header className={`appbar ${scrolled ? 'appbar-solid' : ''}`}>
+        <div className="max-w-2xl mx-auto px-5 pt-4 pb-3 flex items-center gap-3">
+          <h1
+            className="t-display flex-1 min-w-0 truncate transition-all"
+            style={{ fontSize: scrolled ? 17 : 28 }}
+          >
+            {viewTitle[activeView]}
+          </h1>
+          <button className="btn-icon" onClick={() => fetchData()} aria-label="רענן נתונים">
+            <Icon name="refresh" />
+          </button>
+          <div className="relative">
+            <button
+              className="btn-icon btn-icon-filled"
+              onClick={() => setIsMenuOpen(v => !v)}
+              aria-label="תפריט"
+              aria-haspopup="menu"
+              aria-expanded={isMenuOpen}
+            >
+              <Icon name="list" />
+            </button>
+            {isMenuOpen && (
+              <div className="sheet pop-in absolute left-0 top-12 w-52 z-[1001] flex flex-col" role="menu">
+                {([
+                  ['INVENTORY', 'מלאי', 'box'], ['SHOPPING', 'קניות', 'cart'],
+                  ['TEMPLATES', 'רשימות', 'suitcase'], ['TASKS', 'משימות', 'pin'],
+                  ['SETTINGS', 'הגדרות', 'gear'],
+                ] as [View, string, string][]).map(([v, label, icon]) => (
+                  <button
+                    key={v}
+                    role="menuitem"
+                    onClick={() => changeView(v)}
+                    className="flex items-center gap-3 px-4 py-3 text-right t-label hover:bg-[var(--s-sunken)] border-b border-[var(--border-subtle)] last:border-0"
+                    style={{ color: 'var(--t-primary)' }}
+                  >
+                    <Icon name={icon} size={18} />
+                    <span className="flex-1">{label}</span>
+                  </button>
+                ))}
               </div>
-            </div>
+            )}
           </div>
-          {isSearchOpen && activeView !== 'HOME' && (
-            <div className="relative w-full animate-in fade-in slide-in-from-top-2 mt-2">
-              <input type="text" placeholder={`חיפוש ${activeView === 'INVENTORY' ? 'במלאי' : activeView === 'SHOPPING' ? 'בקניות' : 'במשימות'}...`} value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full p-3 rounded-xl bg-white/20 border border-white/30 text-white placeholder-white/80 focus:bg-white focus:text-slate-900 focus:placeholder-slate-400 outline-none transition-all shadow-inner font-medium" autoFocus />
-            </div>
-          )}
         </div>
+        {scrolled && <div className="appbar-accent" />}
       </header>
 
-      {isMenuOpen && <div className="fixed inset-0 z-[999]" onClick={() => setIsMenuOpen(false)}></div>}
+      {isMenuOpen && <button className="fixed inset-0 z-[999]" onClick={() => setIsMenuOpen(false)} aria-label="סגור תפריט" tabIndex={-1} />}
 
-      <div key={activeView} className="max-w-2xl mx-auto p-4 relative z-10 view-anim">
-        
-        {/* קופסאות שאלות סיווג למלאי ולקניות */}
-        {pendingItems.length > 0 && (activeView === 'INVENTORY' || activeView === 'SHOPPING') && (
-          <div className="mb-8 space-y-4">
-            {pendingItems.map((item, idx) => (
-              <ClassificationCard 
-                key={`pending-${idx}`} 
-                item={item} 
-                categories={categories} 
-                onResolve={handleResolvePending} 
-                onIgnore={() => {
-                  setPendingItems(prev => prev.filter(p => p.item_name !== item.item_name));
-                  if (pendingItems.length <= 1) showStatus('✅ נשמר ב"כללי"', true);
-                }}
+      <div key={activeView} className="max-w-2xl mx-auto px-5 relative z-10">
+
+        {/* status note */}
+        {note && (
+          <div className={`${noteClass} mb-4 slide-up`} role="status" aria-live="polite">
+            <Icon name={note.kind === 'danger' ? 'alert' : note.kind === 'warn' ? 'alert' : note.kind === 'info' ? 'clock' : 'check'} size={18} />
+            <span className="flex-1">{note.text}</span>
+            <button className="btn-icon" style={{ width: 28, height: 28 }} onClick={() => setNote(null)} aria-label="סגור הודעה">
+              <Icon name="x" size={15} />
+            </button>
+          </div>
+        )}
+
+        {loadError && (
+          <div className="note note-danger mb-4" role="alert">
+            <Icon name="alert" size={18} />
+            <span className="flex-1">הנתונים לא נטענו. {loadError}</span>
+          </div>
+        )}
+
+        {/* ---------- HOME: dashboard ---------- */}
+        {activeView === 'HOME' && (
+          loading ? (
+            <div className="grid gap-3 mt-2">
+              <div className="skel" style={{ height: 132 }} />
+              <div className="grid grid-cols-3 gap-3">
+                <div className="skel" style={{ height: 96 }} />
+                <div className="skel" style={{ height: 96 }} />
+                <div className="skel" style={{ height: 96 }} />
+              </div>
+            </div>
+          ) : (
+            <div className="stagger grid gap-3 mt-2">
+              {(() => {
+                const cards = [
+                  { view: 'SHOPPING' as View, icon: 'cart', label: 'פריטים לקנות', count: safeShoppingList.length, c: 'var(--c-primary)' },
+                  { view: 'TASKS' as View, icon: 'pin', label: 'משימות פתוחות', count: activeTasks.length, c: 'var(--c-acc2)' },
+                  { view: 'TEMPLATES' as View, icon: 'suitcase', label: 'פריטים לארוז', count: unpackedVisible, c: 'var(--c-acc3)' },
+                  { view: 'INVENTORY' as View, icon: 'box', label: 'פריטים במלאי', count: stockInventory.length, c: 'var(--c-acc1)' },
+                ];
+                const hero = cards.reduce((a, b) => (b.count > a.count ? b : a), cards[0]);
+                const rest = cards.filter(c => c.view !== hero.view);
+                return (
+                  <>
+                    <button
+                      onClick={() => changeView(hero.view)}
+                      className="card card-interactive spine text-right"
+                      style={{ ['--spine-c' as any]: hero.c }}
+                    >
+                      <div className="flex items-start gap-4">
+                        <span className="tile tile-lg" style={{ ['--tile-c' as any]: hero.c }}>
+                          <Icon name={hero.icon} size={26} />
+                        </span>
+                        <span className="flex-1">
+                          <span className="block num t-dim" style={{ fontSize: 48, lineHeight: 1.05, fontWeight: 700, color: 'var(--t-primary)' }}>
+                            {hero.count}
+                          </span>
+                          <span className="block t-label t-dim mt-1">{hero.label}</span>
+                        </span>
+                        <span className="t-faint mt-2"><Icon name="chevron" size={18} /></span>
+                      </div>
+                    </button>
+                    <div className="grid grid-cols-3 gap-3">
+                      {rest.map(c => (
+                        <button
+                          key={c.view}
+                          onClick={() => changeView(c.view)}
+                          className="card card-tight card-interactive spine text-right"
+                          style={{ ['--spine-c' as any]: c.c }}
+                        >
+                          <span className="tile mb-2" style={{ ['--tile-c' as any]: c.c, width: 36, height: 36 }}>
+                            <Icon name={c.icon} size={18} />
+                          </span>
+                          <span className="block num" style={{ fontSize: 24, fontWeight: 700, color: 'var(--t-primary)' }}>{c.count}</span>
+                          <span className="block t-micro t-dim mt-0.5 truncate">{c.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <button onClick={() => changeView('SETTINGS')} className="card card-tight card-interactive flex items-center gap-3">
+                      <span className="tile" style={{ ['--tile-c' as any]: 'var(--c-head)', width: 36, height: 36 }}>
+                        <Icon name="gear" size={18} />
+                      </span>
+                      <span className="flex-1 text-right t-label">עיצוב, פונטים והגדרות</span>
+                      <span className="t-faint"><Icon name="chevron" size={16} /></span>
+                    </button>
+                  </>
+                );
+              })()}
+            </div>
+          )
+        )}
+
+        {/* ---------- shared: sort + search ---------- */}
+        {(activeView === 'INVENTORY' || activeView === 'SHOPPING') && (
+          <div className="flex flex-col gap-3 mb-4">
+            <div className="seg" role="tablist" aria-label="מיון">
+              <button role="tab" aria-selected={sortBy === 'name'} onClick={() => setSortBy('name')} className="seg-item">לפי א״ב</button>
+              <button role="tab" aria-selected={sortBy === 'category'} onClick={() => setSortBy('category')} className="seg-item">לפי קטגוריות</button>
+            </div>
+            <div className="relative">
+              <span className="absolute top-1/2 -translate-y-1/2 t-faint pointer-events-none" style={{ insetInlineStart: 14 }}>
+                <Icon name="search" size={18} />
+              </span>
+              <label className="sr-only" htmlFor="search-field">חיפוש</label>
+              <input
+                id="search-field"
+                type="search"
+                className="field"
+                style={{ paddingInlineStart: 44, paddingInlineEnd: 44 }}
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                placeholder={activeView === 'INVENTORY' ? 'חפש פריט במלאי' : 'חפש פריט בקניות'}
+              />
+              {searchTerm && (
+                <button
+                  className="btn-icon absolute top-1/2 -translate-y-1/2"
+                  style={{ insetInlineEnd: 4, width: 34, height: 34 }}
+                  onClick={() => setSearchTerm('')}
+                  aria-label="נקה חיפוש"
+                >
+                  <Icon name="x" size={16} />
+                </button>
+              )}
+            </div>
+            {searchTerm && (
+              <p className="t-micro t-dim">
+                {activeView === 'INVENTORY' ? filteredInventory.length : filteredShoppingList.length} תוצאות · לחיצה על שם או קטגוריה פותחת לעריכה
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* ---------- classification cards ---------- */}
+        {(dbPending.length > 0 || localPending.length > 0) && activeView === 'INVENTORY' && (
+          <div className="mb-6 grid gap-3">
+            {dbPending.map(item => (
+              <ClassificationCard
+                key={`dbp-${item.id}`}
+                name={item.item_name}
+                categories={pickCategories}
+                onResolve={cat => resolveDbPending(item, cat)}
+                onIgnore={() => resolveDbPending(item, 'כללי')}
+              />
+            ))}
+            {localPending.map((item, idx) => (
+              <ClassificationCard
+                key={`lp-${idx}-${item.item_name}`}
+                name={item.item_name || item.name}
+                categories={pickCategories}
+                onResolve={cat => resolveLocalPending(item, cat)}
+                onIgnore={() => resolveLocalPending(item, 'כללי')}
               />
             ))}
           </div>
         )}
 
-        {/* קופסאות הבהרה (Disambiguation) למחיקה של כפילויות */}
+        {/* ---------- disambiguation ---------- */}
         {disambiguationItems.length > 0 && activeView === 'INVENTORY' && (
-          <div className="mb-8 space-y-4">
+          <div className="mb-6 grid gap-3">
             {disambiguationItems.map((task, idx) => (
-              <div key={`dis-${idx}`} className="bg-rose-50 p-6 rounded-[2rem] border-2 border-rose-200 shadow-lg animate-bounce-short">
-                <p className="font-black text-lg mb-4 text-rose-900">
-                  יש כמה סוגים של "<span className="text-[var(--c-primary)]">{task.originalName}</span>" במלאי. <br/> איזה מהם להוריד?
+              <div key={`dis-${idx}`} className="card">
+                <p className="t-body mb-3">
+                  יש כמה סוגים של <b>{task.originalName}</b> במלאי. איזה מהם להוריד?
                 </p>
-                <div className="flex flex-wrap gap-2 mb-4">
-                  {task.matches.map(match => (
-                    <button key={match.id} onClick={() => handleResolveDisambiguation(task, match)} className="bg-white px-4 py-2 rounded-xl font-bold text-sm shadow-sm border border-rose-100 hover:bg-[var(--c-primary-soft)] hover:text-white transition-all">
-                      {match.item_name} ({match.quantity})
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {task.matches.map(m => (
+                    <button key={m.id} onClick={() => handleResolveDisambiguation(task, m)} className="chip chip-btn">
+                      {m.item_name} · <span className="num">{m.quantity}</span>
                     </button>
                   ))}
                 </div>
-                <div className="flex gap-2 border-t border-rose-200 pt-4">
-                  <button onClick={() => handleResolveDisambiguation(task, 'ALL')} className="flex-1 bg-[var(--c-primary)] text-white px-4 py-3 rounded-xl font-black text-sm shadow-sm hover:bg-[var(--c-primary-dark)] transition-all">
-                    🔄 הכל — {task.removeAll ? "אפס את כולם ל-0" : `הורד ${Math.abs(task.quantityToSubtract)} מכל אחד`}
+                <div className="flex gap-2">
+                  <button onClick={() => handleResolveDisambiguation(task, 'ALL')} className="btn btn-primary btn-sm flex-1">
+                    {task.removeAll ? 'אפס את כולם' : `הורד ${Math.abs(task.quantityToSubtract)} מכל אחד`}
                   </button>
-                  <button onClick={() => setDisambiguationItems(prev => prev.filter(t => t !== task))} className="bg-slate-200 text-slate-500 px-4 py-3 rounded-xl font-bold text-sm shadow-sm hover:bg-slate-300 transition-all">
-                    ביטול
-                  </button>
+                  <button onClick={() => setDisambiguationItems(prev => prev.filter(t => t !== task))} className="btn btn-secondary btn-sm">ביטול</button>
                 </div>
               </div>
             ))}
           </div>
         )}
 
-        {activeView === 'HOME' && (
-          <div className="grid grid-cols-1 gap-4 mt-6">
-            <button onClick={() => changeView('INVENTORY')} className="p-6 bg-white rounded-[2rem] shadow-lg border-b-8 border-[var(--c-acc1)] flex items-center justify-between active:scale-95 transition-all">
-               <div className="text-right"><span className="block text-2xl font-black">📦 מלאי</span><span className="text-slate-400 text-sm">ניהול מקרר ומזווה</span></div>
-               <span className="text-4xl">🥦</span>
-            </button>
-            <button onClick={() => changeView('SHOPPING')} className="p-6 bg-white rounded-[2rem] shadow-lg border-b-8 border-[var(--c-primary)] flex items-center justify-between active:scale-95 transition-all">
-               <div className="text-right"><span className="block text-2xl font-black">🛒 קניות</span><span className="text-slate-400 text-sm">{safeShoppingList.length} פריטים</span></div>
-               <span className="text-4xl">🛍️</span>
-            </button>
-            <button onClick={() => changeView('TASKS')} className="p-6 bg-white rounded-[2rem] shadow-lg border-b-8 border-[var(--c-acc2)] text-2xl font-black flex justify-between items-center">
-               <div className="text-right"><span className="block text-2xl font-black">📝 משימות</span><span className="text-slate-400 text-sm">{activeTasks.length} פתוחות</span></div>
-               <span className="text-4xl">📌</span>
-            </button>
-            <button onClick={() => changeView('TEMPLATES')} className="p-6 bg-white rounded-[2rem] shadow-lg border-b-8 border-[var(--c-acc3)] flex items-center justify-between active:scale-95 transition-all">
-               <div className="text-right"><span className="block text-2xl font-black">📝 רשימות</span><span className="text-slate-400 text-sm">{equipmentItems.filter(i => !i.is_packed && !HIDDEN_EQUIP_LISTS.includes(i.list_type)).length} לא נארזו</span></div>
-               <span className="text-4xl">🎒</span>
-            </button>
-          </div>
-        )}
-
-        {(activeView === 'INVENTORY' || activeView === 'SHOPPING') && (
-           <div className="mb-4 flex bg-white rounded-xl shadow-sm border border-[var(--c-line)] p-1">
-             <button onClick={() => setSortBy('name')} className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all ${sortBy === 'name' ? 'bg-indigo-100 text-indigo-800 shadow-sm' : 'text-slate-500 hover:bg-[var(--c-soft)]'}`}>🔤 לפי א״ב</button>
-             <button onClick={() => setSortBy('category')} className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all ${sortBy === 'category' ? 'bg-amber-100 text-amber-800 shadow-sm' : 'text-slate-500 hover:bg-[var(--c-soft)]'}`}>📁 לפי קטגוריות</button>
-           </div>
-        )}
-
-        {(activeView === 'INVENTORY' || activeView === 'SHOPPING') && (
-          <div className="mb-4 relative">
-            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">🔎</span>
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder={activeView === 'INVENTORY' ? 'חפש פריט במלאי לעריכה...' : 'חפש פריט בקניות לעריכה...'}
-              className={`w-full pr-12 pl-12 py-3 bg-white rounded-2xl border-2 text-sm font-bold outline-none transition-all shadow-sm ${searchTerm ? (activeView === 'INVENTORY' ? 'border-teal-300 ring-2 ring-teal-100' : 'border-rose-300 ring-2 ring-rose-100') : 'border-[var(--c-line)] focus:border-slate-300'}`}
-            />
-            {searchTerm && (
-              <button
-                type="button"
-                onClick={() => setSearchTerm('')}
-                className="absolute left-3 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700 font-black text-xs pointer-events-auto transition-colors flex items-center justify-center"
-                title="נקה חיפוש"
-              >
-                ✕
-              </button>
-            )}
-            {searchTerm && (
-              <div className="absolute -bottom-5 right-3 text-[10px] font-bold text-slate-400">
-                {activeView === 'INVENTORY'
-                  ? `${filteredInventory.length} תוצאות — לחיצה על שם / קטגוריה / מיקום פותחת לעריכה`
-                  : `${filteredShoppingList.length} תוצאות — לחיצה על שם או קטגוריה פותחת לעריכה`}
-              </div>
-            )}
-          </div>
-        )}
-
+        {/* ---------- INVENTORY ---------- */}
         {activeView === 'INVENTORY' && (
-          <div className="bg-white p-5 rounded-[2rem] shadow-xl mb-6 border border-[var(--c-line)] relative z-20">
-            <form onSubmit={handleUpdate} className="space-y-3">
-              <textarea value={input} onChange={e => setInput(e.target.value)} placeholder="מה הוספנו/הורדנו מהמלאי? (למשל: תוריד את כל המיונז)" className="w-full p-4 bg-[var(--c-soft)] rounded-2xl text-sm min-h-[70px] border-none focus:ring-2 focus:ring-[var(--c-ring)] pointer-events-auto" />
-              <button type="submit" className="w-full p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto bg-[var(--c-primary)] hover:bg-[var(--c-primary-dark)]">
-                עדכן מלאי ✨
+          <>
+            <form onSubmit={handleInventoryUpdate} className="card mb-4 grid gap-3">
+              <label className="field-label" htmlFor="inv-text">עדכון בטקסט חופשי</label>
+              <textarea
+                id="inv-text"
+                className="field"
+                value={invInput}
+                onChange={e => setInvInput(e.target.value)}
+                placeholder="למשל: תוריד את כל המיונז, 2 חלב"
+              />
+              <button type="submit" className="btn btn-primary" disabled={!invInput.trim()}>
+                <Icon name="sparkle" size={18} /> עדכן מלאי
               </button>
             </form>
-            {status && (
-              <div className="mt-4 flex justify-center animate-in fade-in slide-in-from-bottom-2">
-                <span className={`px-4 py-2 rounded-full text-xs font-bold shadow-sm ${status.includes('❌') ? 'bg-red-100 text-red-600' : status.includes('🤔') || status.includes('כמה') ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700'}`}>{status}</span>
+
+            <div className="seg mb-4" role="tablist" aria-label="מיקום">
+              {(['הכל', 'מקרר', 'מזווה'] as const).map(f => (
+                <button key={f} role="tab" aria-selected={invFilter === f} onClick={() => setInvFilter(f)} className="seg-item">
+                  {f === 'מקרר' && <Icon name="snow" size={15} />}{f}
+                </button>
+              ))}
+            </div>
+
+            {lowStockAlerts.length > 0 && (
+              <div className="mb-4 grid gap-2">
+                {lowStockAlerts.map(a => (
+                  <div key={`low-${a.id}`} className="note note-warn">
+                    <Icon name="alert" size={18} />
+                    <span className="flex-1">נשארו <span className="num">{a.quantity}</span> מ{a.item_name}. להוסיף לקניות?</span>
+                    <button onClick={() => addToShopping(a)} className="btn btn-primary btn-xs">כן</button>
+                    <button onClick={() => setLowStockAlerts(prev => prev.filter(i => i.id !== a.id))} className="btn btn-secondary btn-xs">לא</button>
+                  </div>
+                ))}
               </div>
             )}
-          </div>
+
+            {loading ? (
+              <div className="grid gap-3">{[0, 1, 2, 3].map(i => <div key={i} className="skel" style={{ height: 92 }} />)}</div>
+            ) : filteredInventory.length === 0 ? (
+              <EmptyState
+                icon={searchTerm ? 'search' : 'box'}
+                title={searchTerm ? 'אין תוצאות' : 'המלאי ריק'}
+                body={searchTerm ? 'אין פריט שתואם את החיפוש.' : 'הוסף פריטים בטקסט חופשי למעלה, או העבר פריטים מהקניות.'}
+                actionLabel={searchTerm ? 'נקה חיפוש' : undefined}
+                onAction={searchTerm ? () => setSearchTerm('') : undefined}
+              />
+            ) : sortBy === 'category' ? (
+              <div className="grid gap-6">
+                {displayCategories.map(cat => {
+                  const items = filteredInventory.filter(i => (i.category || 'כללי') === cat);
+                  if (!items.length) return null;
+                  return (
+                    <section key={`cat-${cat}`} className="grid gap-3">
+                      <h2 className="eyebrow">{cat}</h2>
+                      {items.map(item => (
+                        <InventoryCard key={item.id} item={item} {...invCardProps(item)} />
+                      ))}
+                    </section>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="grid gap-3">
+                {filteredInventory.map(item => <InventoryCard key={item.id} item={item} {...invCardProps(item)} />)}
+              </div>
+            )}
+          </>
         )}
 
+        {/* ---------- SHOPPING ---------- */}
         {activeView === 'SHOPPING' && (
-          <div className="bg-white p-5 rounded-[2rem] shadow-xl mb-6 border border-[var(--c-line)] relative z-20">
-            <form onSubmit={handleQuickAddSubmit} className="space-y-3">
+          <>
+            <form onSubmit={handleQuickAddSubmit} className="card mb-4 grid gap-3">
               {quickAddRows.map((row, i) => {
-                const dropdownCats = displayCategories.filter(c => c && c !== 'uncertain' && c !== 'null' && c !== 'כללי');
-                const q = stripName(row.name).toLowerCase();
+                const q = normKey(row.name);
                 const matches = (suggestRow === i && q.length >= 1)
-                  ? suggestionPool.filter(s => {
-                      const sl = s.toLowerCase();
-                      return sl.includes(q) && sl !== q;
-                    }).slice(0, 7)
+                  ? suggestionPool.filter(s => { const sl = s.toLowerCase(); return sl.includes(q) && sl !== q; }).slice(0, 7)
                   : [];
                 return (
-                  <div key={`qa-${i}`} className="space-y-2">
-                    <div className="flex gap-2 items-stretch">
+                  <div key={`qa-${i}`} className="grid gap-2">
+                    <div className="flex gap-2">
                       <div className="relative flex-1">
+                        <label className="sr-only" htmlFor={`qa-name-${i}`}>{i === 0 ? 'פריט לקנייה' : `פריט נוסף ${i + 1}`}</label>
                         <input
+                          id={`qa-name-${i}`}
+                          className="field"
                           type="text"
                           value={row.name}
-                          onChange={(e) => updateQuickAddRow(i, { name: e.target.value })}
-                          onFocus={() => setSuggestRow(i)}
-                          onBlur={() => { window.setTimeout(() => setSuggestRow(prev => prev === i ? null : prev), 150); autoFillRowCategory(i, row.name); }}
-                          placeholder={i === 0 ? 'פריט לקנייה...' : 'פריט נוסף (אופציונלי)'}
-                          className="w-full p-3 bg-[var(--c-soft)] rounded-xl text-sm font-bold border-none outline-none focus:ring-2 focus:ring-[var(--c-ring)] pointer-events-auto"
                           autoComplete="off"
+                          role="combobox"
+                          aria-expanded={matches.length > 0}
+                          aria-autocomplete="list"
+                          onChange={e => { updateQuickAddRow(i, { name: e.target.value }); setSuggestIdx(0); }}
+                          onFocus={() => { setSuggestRow(i); setSuggestIdx(0); }}
+                          onBlur={() => { window.setTimeout(() => setSuggestRow(prev => (prev === i ? null : prev)), 150); autoFillRowCategory(i, row.name); }}
+                          onKeyDown={e => {
+                            if (!matches.length) return;
+                            if (e.key === 'ArrowDown') { e.preventDefault(); setSuggestIdx(x => Math.min(x + 1, matches.length - 1)); }
+                            else if (e.key === 'ArrowUp') { e.preventDefault(); setSuggestIdx(x => Math.max(x - 1, 0)); }
+                            else if (e.key === 'Enter' && suggestRow === i) {
+                              e.preventDefault();
+                              const pick = matches[suggestIdx];
+                              if (pick) { updateQuickAddRow(i, { name: pick }); setSuggestRow(null); autoFillRowCategory(i, pick); }
+                            } else if (e.key === 'Escape') setSuggestRow(null);
+                          }}
+                          placeholder={i === 0 ? 'פריט לקנייה' : 'פריט נוסף'}
                         />
                         {matches.length > 0 && (
-                          <div className="absolute z-30 top-full mt-1 inset-x-0 bg-white rounded-xl shadow-2xl border border-[var(--c-line)] overflow-hidden max-h-60 overflow-y-auto">
-                            {matches.map(m => (
-                              <button
-                                key={m}
-                                type="button"
-                                onMouseDown={(e) => {
-                                  e.preventDefault();
-                                  updateQuickAddRow(i, { name: m });
-                                  setSuggestRow(null);
-                                  autoFillRowCategory(i, m);
-                                }}
-                                className="w-full text-right px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-rose-50 hover:text-[var(--c-head)] border-b border-[var(--c-line)] last:border-0 pointer-events-auto transition-colors"
-                              >
-                                {m}
-                              </button>
+                          <ul className="sheet absolute z-30 top-full mt-1 inset-x-0 max-h-60 overflow-y-auto" role="listbox">
+                            {matches.map((m, mi) => (
+                              <li key={m} role="option" aria-selected={mi === suggestIdx}>
+                                <button
+                                  type="button"
+                                  onMouseDown={e => { e.preventDefault(); updateQuickAddRow(i, { name: m }); setSuggestRow(null); autoFillRowCategory(i, m); }}
+                                  className="w-full text-right px-4 py-3 t-body border-b border-[var(--border-subtle)] last:border-0"
+                                  style={{ background: mi === suggestIdx ? 'var(--s-sunken)' : 'transparent' }}
+                                >
+                                  {m}
+                                </button>
+                              </li>
                             ))}
-                          </div>
+                          </ul>
                         )}
                       </div>
+                      <label className="sr-only" htmlFor={`qa-cat-${i}`}>קטגוריה</label>
                       <select
+                        id={`qa-cat-${i}`}
+                        className="field"
+                        style={{ width: 130, flex: 'none' }}
                         value={row.category}
-                        onChange={(e) => updateQuickAddRow(i, { category: e.target.value, newCategory: e.target.value === '__other__' ? row.newCategory : '' })}
-                        className="p-3 bg-[var(--c-soft)] rounded-xl text-sm font-bold border-none outline-none focus:ring-2 focus:ring-[var(--c-ring)] pointer-events-auto min-w-[110px]"
+                        onChange={e => updateQuickAddRow(i, { category: e.target.value, newCategory: e.target.value === '__other__' ? row.newCategory : '' })}
                       >
-                        <option value="">{catGuessingRow === i ? '🤖 מסווג…' : '🤖 סיווג אוטומטי'}</option>
+                        <option value="">{catGuessingRow === i ? 'מסווג…' : 'סיווג אוטומטי'}</option>
                         <option value="כללי">כללי</option>
-                        {dropdownCats.map(c => <option key={c} value={c}>{c}</option>)}
+                        {pickCategories.map(c => <option key={c} value={c}>{c}</option>)}
                         <option value="__other__">+ אחר…</option>
                       </select>
                     </div>
                     {row.category === '__other__' && (
                       <input
+                        className="field"
                         type="text"
                         value={row.newCategory}
-                        onChange={(e) => updateQuickAddRow(i, { newCategory: e.target.value })}
-                        placeholder="הקלד שם קטגוריה חדשה..."
-                        className="w-full p-3 bg-rose-50 border-2 border-rose-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-[var(--c-ring)] pointer-events-auto"
+                        onChange={e => updateQuickAddRow(i, { newCategory: e.target.value })}
+                        placeholder="שם קטגוריה חדשה"
+                        aria-label="שם קטגוריה חדשה"
                       />
                     )}
                   </div>
                 );
               })}
-              <div className="flex gap-2 pt-1">
-                <button
-                  type="submit"
-                  disabled={quickAddSubmitting || quickAddRows.every(r => !r.name.trim())}
-                  className="flex-1 p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto bg-[var(--c-primary)] hover:bg-[var(--c-primary-dark)] disabled:bg-rose-300 disabled:cursor-not-allowed"
-                >
-                  הוסף לקניות 🛒
+              <div className="flex gap-2">
+                <button type="submit" className="btn btn-primary flex-1" disabled={quickAddSubmitting || quickAddRows.every(r => !r.name.trim())}>
+                  <Icon name="plus" size={18} /> הוסף לקניות
                 </button>
-                <button
-                  type="button"
-                  onClick={openCategorize}
-                  className="px-4 py-4 rounded-2xl text-white font-black text-sm active:scale-95 transition-all shadow-md pointer-events-auto bg-indigo-500 hover:bg-[var(--c-primary)]"
-                  title="חלוקת פריטים מ׳כללי׳ לקטגוריות"
-                >
-                  📁 חלוקה
+                <button type="button" onClick={openCategorize} className="btn btn-secondary" title="חלוקת פריטים לא מסווגים">
+                  <Icon name="folder" size={18} /> חלוקה
                 </button>
               </div>
             </form>
-            {status && (
-              <div className="mt-4 flex justify-center animate-in fade-in slide-in-from-bottom-2">
-                <span className={`px-4 py-2 rounded-full text-xs font-bold shadow-sm ${status.includes('❌') ? 'bg-red-100 text-red-600' : status.includes('⚠️') || status.includes('🤔') ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700'}`}>{status}</span>
-              </div>
-            )}
-          </div>
-        )}
 
-        {showCategorize && activeView === 'SHOPPING' && (() => {
-          const klaliItems = filteredShoppingList.filter(s => !s.category || s.category === 'כללי');
-          const dropdownCats = displayCategories.filter(c => c && c !== 'uncertain' && c !== 'null' && c !== 'כללי');
-          return (
-            <div className="mb-6 bg-indigo-50 border-2 border-indigo-200 p-5 rounded-[2rem] shadow-lg">
-              <div className="flex justify-between items-center mb-3">
-                <h3 className="font-black text-lg text-indigo-900">📁 חלוקה לקטגוריות</h3>
-                <button
-                  type="button"
-                  onClick={() => { setShowCategorize(false); setCategorizeAssignments({}); setCategorizeNewCats({}); }}
-                  className="bg-white text-slate-500 hover:bg-slate-100 w-8 h-8 rounded-full font-black pointer-events-auto"
-                >
-                  ✕
-                </button>
-              </div>
-              {klaliItems.length === 0 ? (
-                <p className="text-sm text-slate-500 italic">אין פריטים בכללי 🎉</p>
-              ) : (
-                <>
-                  <p className="text-xs text-indigo-700 mb-3 font-bold">בחר קטגוריה לכל פריט (או השאר ב״כללי״):</p>
-                  <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
-                    {klaliItems.map(item => {
-                      const chosen = categorizeAssignments[item.id] || 'כללי';
-                      return (
-                        <div key={`cz-${item.id}`} className="bg-white p-3 rounded-xl border border-indigo-100 space-y-2">
-                          <div className="flex items-center gap-2">
-                            <span className="flex-1 font-bold text-slate-800 text-sm">{item.item_name}</span>
-                            <select
-                              value={chosen}
-                              onChange={(e) => setCategorizeAssignments(prev => ({ ...prev, [item.id]: e.target.value }))}
-                              className="p-2 bg-[var(--c-soft)] rounded-lg text-xs font-bold border border-[var(--c-line)] outline-none focus:ring-2 focus:ring-[var(--c-ring)] pointer-events-auto min-w-[100px]"
-                            >
-                              <option value="כללי">כללי</option>
-                              {dropdownCats.map(c => <option key={c} value={c}>{c}</option>)}
-                              <option value="__other__">+ אחר…</option>
-                            </select>
-                          </div>
-                          {chosen === '__other__' && (
-                            <input
-                              type="text"
-                              value={categorizeNewCats[item.id] || ''}
-                              onChange={(e) => setCategorizeNewCats(prev => ({ ...prev, [item.id]: e.target.value }))}
-                              placeholder="קטגוריה חדשה..."
-                              className="w-full p-2 bg-rose-50 border border-rose-200 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-[var(--c-ring)] pointer-events-auto"
-                            />
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="flex gap-2 mt-4 pt-3 border-t border-indigo-200">
-                    <button
-                      type="button"
-                      onClick={applyCategorizeAssignments}
-                      className="flex-1 bg-[var(--c-primary)] text-white p-3 rounded-xl font-black text-sm pointer-events-auto hover:bg-[var(--c-primary-dark)] transition-colors"
-                    >
-                      💾 שמור שינויים
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setShowCategorize(false); setCategorizeAssignments({}); setCategorizeNewCats({}); }}
-                      className="bg-slate-200 text-slate-600 px-4 py-3 rounded-xl font-bold text-sm pointer-events-auto hover:bg-slate-300 transition-colors"
-                    >
-                      ביטול
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          );
-        })()}
-
-        {wordChoiceTasks.length > 0 && activeView === 'SHOPPING' && (
-          <div className="mb-8 space-y-4">
-            {wordChoiceTasks.map((task, idx) => (
-              <div key={`wc-${idx}`} className="bg-rose-50 p-6 rounded-[2rem] border-2 border-rose-200 shadow-lg">
-                <p className="font-black text-lg mb-4 text-rose-900">
-                  למה התכוונת? אחת מהמילים ב<span className="text-[var(--c-primary)]">&quot;{task.originalName}&quot;</span> היא מוצר בפני עצמו.
-                </p>
-                <div className="flex flex-wrap gap-2 mb-4">
-                  <button
-                    onClick={() => handleResolveWordChoice(task, task.originalName)}
-                    className="bg-[var(--c-primary)] text-white px-4 py-2 rounded-xl font-black text-sm shadow-sm hover:bg-[var(--c-primary-dark)] transition-all"
-                  >
-                    {task.originalName}
-                  </button>
-                  {task.options.map(opt => (
-                    <button
-                      key={opt}
-                      onClick={() => handleResolveWordChoice(task, opt)}
-                      className="bg-white px-4 py-2 rounded-xl font-bold text-sm shadow-sm border border-rose-100 hover:bg-[var(--c-primary-soft)] hover:text-white transition-all"
-                    >
-                      {opt}
-                    </button>
-                  ))}
-                </div>
-                <button
-                  onClick={() => setWordChoiceTasks(prev => prev.filter(t => t !== task))}
-                  className="bg-slate-200 text-slate-500 px-4 py-2 rounded-xl font-bold text-sm shadow-sm hover:bg-slate-300 transition-all"
-                >
-                  ביטול
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {addedSummary.length > 0 && (activeView === 'SHOPPING' || activeView === 'TEMPLATES') && (
-          <div className="mb-6 bg-emerald-50 border-2 border-emerald-200 p-4 rounded-2xl">
-            <div className="flex justify-between items-center mb-3">
-              <span className="font-black text-emerald-800 text-sm">✅ נוסף לקניות</span>
-              <button
-                onClick={() => setAddedSummary([])}
-                className="bg-white text-slate-500 hover:bg-slate-100 w-7 h-7 rounded-full font-black text-xs pointer-events-auto transition-colors"
-                title="סגור"
-              >
-                ✕
-              </button>
-            </div>
-            <ul className="space-y-1.5">
-              {addedSummary.map((a, i) => (
-                <li key={`added-${i}`} className="flex items-center gap-2 flex-wrap text-sm">
-                  <span className="font-bold text-emerald-900">{a.name}</span>
-                  <span className="text-emerald-400">←</span>
-                  <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full text-[11px] font-black">📁 {a.category}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {duplicateShoppingAlerts.length > 0 && activeView === 'SHOPPING' && (
-          <div className="mb-6 space-y-3">
-            {duplicateShoppingAlerts.map(name => (
-              <div key={`dup-${name}`} className="bg-amber-50 border-2 border-amber-200 p-4 rounded-2xl flex justify-between items-center gap-3">
-                <span className="font-bold text-amber-900 text-sm">⚠️ &quot;{name}&quot; כבר ברשימה</span>
-                <button
-                  onClick={() => setDuplicateShoppingAlerts(prev => prev.filter(n => n !== name))}
-                  className="bg-[var(--c-primary)] text-white px-4 py-1.5 rounded-xl font-black text-sm pointer-events-auto hover:bg-[var(--c-primary-dark)] transition-colors"
-                >
-                  הבנתי
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {lowStockAlerts.length > 0 && activeView === 'INVENTORY' && (
-          <div className="mb-6 space-y-3">
-            {lowStockAlerts.map(alert => (
-              <div key={`alert-${alert.item_name}`} className="bg-rose-50 border-2 border-rose-200 p-4 rounded-2xl flex justify-between items-center">
-                <span className="font-bold text-rose-900 text-sm">רק {alert.quantity} מ"{alert.item_name}". לקניות?</span>
-                <div className="flex gap-2">
-                  <button onClick={() => addToShopping(alert)} className="bg-[var(--c-primary)] text-white px-3 py-1.5 rounded-xl font-bold text-sm pointer-events-auto">כן</button>
-                  <button onClick={() => setLowStockAlerts(prev => prev.filter(i => i.item_name !== alert.item_name))} className="bg-white text-[var(--c-primary)] border border-rose-200 px-3 py-1.5 rounded-xl font-bold text-sm pointer-events-auto">לא</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {activeView === 'INVENTORY' && (
-          <section className="space-y-6">
-            <div className="flex gap-1 p-1 bg-white rounded-xl shadow-sm border border-[var(--c-line)]">
-              {['הכל', 'מקרר', 'מזווה'].map(f => (
-                <button key={f} onClick={() => setInvFilter(f as any)} className={`flex-1 py-2.5 rounded-lg text-xs font-bold transition-all pointer-events-auto ${invFilter === f ? 'bg-[var(--c-primary)] text-white shadow-md' : 'text-slate-400 hover:bg-[var(--c-soft)]'}`}>{f}</button>
-              ))}
-            </div>
-
-            {sortBy === 'category' ? (
-              <div className="space-y-8">
-                {displayCategories.map(cat => {
-                  const itemsInCat = filteredInventory.filter(i => (i.category || 'כללי') === cat);
-                  if (itemsInCat.length === 0) return null;
-                  return (
-                    <div key={`cat-${cat}`} className="space-y-3">
-                      <h3 className="font-black text-[var(--c-head)] text-xs uppercase pr-2 border-r-4 border-[var(--c-primary)]">{cat}</h3>
-                      <div className="grid gap-3">
-                        {itemsInCat.map(item => <InventoryCard key={item.id} item={item} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} updateExactQuantity={updateExactQuantity} onPlus={() => handlePlus(item)} onMinus={() => handleMinus(item)} onAddToShopping={addToShopping} shoppingList={shoppingList} onDelete={deleteInventoryItem} editingCatItemId={editingCatItemId} editCatValue={editCatValue} setEditingCatItemId={setEditingCatItemId} setEditCatValue={setEditCatValue} saveEditedCategory={saveEditedCategory} categories={displayCategories} onUpdateLocation={(loc: string) => updateInventoryField(item, 'location', loc)} highlight={!!searchTerm && (item.item_name || '').includes(searchTerm)} />)}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="grid gap-3">
-                {filteredInventory.map(item => <InventoryCard key={item.id} item={item} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} updateExactQuantity={updateExactQuantity} onPlus={() => handlePlus(item)} onMinus={() => handleMinus(item)} onAddToShopping={addToShopping} shoppingList={shoppingList} onDelete={deleteInventoryItem} editingCatItemId={editingCatItemId} editCatValue={editCatValue} setEditingCatItemId={setEditingCatItemId} setEditCatValue={setEditCatValue} saveEditedCategory={saveEditedCategory} categories={displayCategories} onUpdateLocation={(loc: string) => updateInventoryField(item, 'location', loc)} highlight={!!searchTerm && (item.item_name || '').includes(searchTerm)} />)}
-              </div>
-            )}
-          </section>
-        )}
-
-        {activeView === 'SHOPPING' && (
-          <section className="space-y-6">
-            {sortBy === 'category' ? (
-              <div className="space-y-8">
-                {displayCategories.map(cat => {
-                  const list = filteredShoppingList.filter(s => (s.category || 'כללי') === cat);
-                  const isAddOpen = categoryAddOpen === cat;
-                  if (list.length === 0 && !isAddOpen && searchTerm) return null;
-                  return (
-                    <div key={`shop-cat-${cat}`} className="space-y-3">
-                      <div className="flex items-center justify-between gap-2 pr-2">
-                        {editingCategoryName === cat ? (
-                          <div className="flex items-center gap-2 flex-1">
-                            <input
-                              autoFocus
-                              value={categoryNameValue}
-                              onChange={(e) => setCategoryNameValue(e.target.value)}
-                              onKeyDown={(e) => { if (e.key === 'Enter') saveRenameCategory(cat); if (e.key === 'Escape') setEditingCategoryName(null); }}
-                              className="flex-1 border-b-2 border-[var(--c-primary)] bg-rose-50 px-2 py-1 outline-none font-black text-sm pointer-events-auto"
-                            />
-                            <button type="button" onClick={() => saveRenameCategory(cat)} className="bg-green-100 text-green-700 px-2 py-1 rounded-lg text-xs font-black pointer-events-auto">✅</button>
-                            <button type="button" onClick={() => setEditingCategoryName(null)} className="bg-slate-100 text-slate-400 px-2 py-1 rounded-lg text-xs font-black pointer-events-auto">✕</button>
-                          </div>
-                        ) : (
-                          <h3 className="font-black text-[var(--c-head)] text-sm uppercase border-r-4 border-[var(--c-primary)] pr-2 flex-1">{cat}</h3>
-                        )}
-                        {editingCategoryName !== cat && (
-                          <div className="flex items-center gap-1.5">
-                            {cat !== 'כללי' && (
-                              <>
-                                <button type="button" onClick={() => startRenameCategory(cat)} title="שנה שם קטגוריה" className="text-[11px] font-black bg-slate-100 text-slate-500 hover:bg-slate-200 px-2.5 py-1.5 rounded-xl pointer-events-auto transition-colors">✏️</button>
-                                <button type="button" onClick={() => deleteCategory(cat)} title="מחק קטגוריה" className="text-[11px] font-black bg-slate-100 text-slate-500 hover:bg-red-100 hover:text-red-600 px-2.5 py-1.5 rounded-xl pointer-events-auto transition-colors">🗑️</button>
-                              </>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setCategoryAddOpen(prev => prev === cat ? null : cat);
-                                setCategoryAddInput('');
-                              }}
-                              className="text-[11px] font-black bg-rose-100 text-[var(--c-head)] hover:bg-rose-200 px-3 py-1.5 rounded-xl pointer-events-auto transition-colors"
-                            >
-                              {isAddOpen ? '✕ סגור' : '+ הוסף'}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                      {isAddOpen && (
-                        <form onSubmit={(e) => handleCategoryAdd(e, cat)} className="bg-rose-50 border border-rose-200 p-3 rounded-2xl flex flex-wrap gap-2 items-stretch">
-                          <input
-                            autoFocus
-                            value={categoryAddInput}
-                            onChange={(e) => setCategoryAddInput(e.target.value)}
-                            placeholder={`הוסף ל"${cat}" — תפוזים אפרסק, קישוא צהוב`}
-                            className="flex-1 min-w-[160px] bg-white p-3 rounded-xl text-sm font-bold border border-rose-100 outline-none focus:ring-2 focus:ring-[var(--c-ring)] pointer-events-auto"
-                          />
-                          <button
-                            type="submit"
-                            disabled={categoryAddLoading || !categoryAddInput.trim()}
-                            className="bg-[var(--c-primary)] text-white px-4 py-2 rounded-xl font-black text-sm shadow-sm hover:bg-[var(--c-primary-dark)] transition-all disabled:bg-rose-300 disabled:cursor-not-allowed pointer-events-auto"
-                          >
-                            {categoryAddLoading ? '...' : 'הוסף ✓'}
-                          </button>
-                        </form>
-                      )}
-                      {list.length > 0 && (
-                        <div className="grid gap-3">
-                          {list.map(s => <ShoppingCard key={s.id} item={s} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} editingCatItemId={editingCatItemId} editCatValue={editCatValue} setEditingCatItemId={setEditingCatItemId} setEditCatValue={setEditCatValue} saveEditedCategory={saveEditedCategory} categories={displayCategories} onDelete={deleteShoppingItem} onMoveToInventory={moveShoppingToInventory} highlight={!!searchTerm && (s.item_name || '').includes(searchTerm)} />)}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="grid gap-3">
-                {filteredShoppingList.map(s => <ShoppingCard key={s.id} item={s} editingId={editingId} editNameValue={editNameValue} setEditingId={setEditingId} setEditNameValue={setEditNameValue} saveEditedName={saveEditedName} editingCatItemId={editingCatItemId} editCatValue={editCatValue} setEditingCatItemId={setEditingCatItemId} setEditCatValue={setEditCatValue} saveEditedCategory={saveEditedCategory} categories={displayCategories} onDelete={deleteShoppingItem} onMoveToInventory={moveShoppingToInventory} highlight={!!searchTerm && (s.item_name || '').includes(searchTerm)} />)}
-              </div>
-            )}
-            
-          </section>
-        )}
-
-        {activeView === 'TASKS' && (
-          <div className="space-y-8">
-            <button onClick={() => setShowTaskForm(!showTaskForm)} className="w-full bg-[var(--c-primary)] text-white p-5 rounded-[1.5rem] font-black shadow-lg active:scale-95 transition-all">
-              {showTaskForm ? 'סגור טופס ✕' : '+ משימה חדשה'}
-            </button>
-
-            {showTaskForm && (
-              <form onSubmit={handleAddTask} className="bg-white p-6 rounded-[2rem] shadow-xl space-y-4 border border-indigo-50 relative z-20">
-                <input placeholder="שם המשימה" className="w-full p-4 bg-[var(--c-soft)] rounded-2xl font-bold" value={newTask.title} onChange={e => setNewTask({...newTask, title: e.target.value})} />
-                <textarea placeholder="תיאור (אופציונלי)" className="w-full p-4 bg-[var(--c-soft)] rounded-2xl text-sm" value={newTask.description} onChange={e => setNewTask({...newTask, description: e.target.value})} />
-                <div className="grid grid-cols-2 gap-3">
-                  <select className="p-4 bg-[var(--c-soft)] rounded-2xl font-bold text-sm" value={newTask.urgency} onChange={e => setNewTask({...newTask, urgency: e.target.value})}>
-                    <option>דחופה מאד</option><option>גבוהה</option><option>סטנדרטית</option><option>נמוכה</option>
-                  </select>
-                  <select className="p-4 bg-[var(--c-soft)] rounded-2xl font-bold text-sm" value={newTask.assignee} onChange={e => setNewTask({...newTask, assignee: e.target.value})}>
-                    <option>שוקי</option><option>הילה</option><option>כולם</option>
-                  </select>
-                </div>
-                <input type="date" className="w-full p-4 bg-[var(--c-soft)] rounded-2xl text-sm font-bold text-center" value={newTask.target_date} onChange={e => setNewTask({...newTask, target_date: e.target.value})} />
-                <div className="flex flex-col gap-1">
-                  <label className="text-[11px] font-black text-slate-500 pr-1">תלות במשימה (אופציונלי)</label>
-                  <select
-                    className="w-full p-4 bg-[var(--c-soft)] rounded-2xl text-sm font-bold"
-                    value={newTask.depends_on_task_id || ''}
-                    onChange={e => setNewTask({...newTask, depends_on_task_id: e.target.value || null})}
-                  >
-                    <option value="">ללא תלות</option>
-                    {tasks.filter(t => t.status !== 'סיימתי').map(t => (
-                      <option key={t.id} value={t.id}>{t.title}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => persistNewTask(false)} className="flex-1 bg-[var(--c-primary)] text-white p-5 rounded-2xl font-black shadow-md hover:bg-[var(--c-primary-dark)] active:scale-95 transition-all">💾 שמור</button>
-                  <button type="button" onClick={() => persistNewTask(true)} className="flex-1 bg-[var(--c-primary-dark)] text-white p-5 rounded-2xl font-black shadow-md hover:bg-emerald-700 active:scale-95 transition-all">💬 שמור + וואטסאפ</button>
-                </div>
-              </form>
-            )}
-
-            <div className="space-y-4">
-              {activeTasks.map(task => {
-                const urgencyColor = task.urgency === 'דחופה מאד' ? 'border-red-500 bg-red-50' : task.urgency === 'גבוהה' ? 'border-orange-400 bg-orange-50' : task.urgency === 'נמוכה' ? 'border-emerald-300 bg-emerald-50/40' : 'border-[var(--c-line)] bg-white';
-                const isPlural = (task.assignee || '').includes('כולם');
-                const blockedBy = getBlockingTask(task);
-                const isEditing = editingTaskId === task.id;
-                const isPoofing = poofingTaskId === task.id;
-                const draft = isEditing ? editTaskDraft : null;
-                const stop = (e: React.MouseEvent) => e.stopPropagation();
-                const chipBase = "px-2 py-1 rounded-full pointer-events-auto transition-colors hover:bg-slate-200";
-                return (
-                  <div
-                    key={task.id}
-                    onClick={() => !isPoofing && startEditTask(task, 'all')}
-                    className={`bg-white p-6 rounded-[2rem] shadow-md border-r-8 ${urgencyColor} relative group cursor-pointer ${blockedBy ? 'opacity-60 grayscale-[40%]' : ''} ${isEditing ? 'ring-2 ring-[var(--c-ring)]' : ''} ${isPoofing ? 'animate-task-poof overflow-hidden' : ''}`}
-                  >
-                    <div className="flex justify-between items-start gap-4 mb-2">
-                      <h3 className="font-black text-xl text-slate-800 flex-1">{task.title}</h3>
-                      <button
-                        onClick={(e) => { stop(e); deleteTask(task.id!); }}
-                        className="px-3 py-1.5 rounded-xl bg-[var(--c-soft)] text-slate-400 text-[10px] font-black border border-[var(--c-line)] hover:bg-red-50 hover:text-red-600 hover:border-red-100 transition-all pointer-events-auto"
-                      >
-                        מחק 🗑️
-                      </button>
-                    </div>
-                    {task.description && <p className="text-sm text-slate-500 mb-4">{task.description}</p>}
-                    {blockedBy && (
-                      <div className="bg-amber-50 border border-amber-200 text-amber-800 px-3 py-2 rounded-xl text-xs font-bold mb-3 flex items-center gap-2">
-                        <span>⏳ ממתין למשימה:</span>
-                        <span className="font-black">{blockedBy.title}</span>
-                      </div>
-                    )}
-                    <div className="flex flex-wrap gap-2 text-[10px] font-black text-slate-400">
-                      <button type="button" onClick={(e) => { stop(e); startEditTask(task, 'assignee'); }} className={`bg-[var(--c-soft)] ${chipBase}`}>👤 {task.assignee}</button>
-                      <button type="button" onClick={(e) => { stop(e); startEditTask(task, 'date'); }} className={`bg-[var(--c-soft)] ${chipBase}`}>📅 {task.target_date}</button>
-                      <button type="button" onClick={(e) => { stop(e); startEditTask(task, 'urgency'); }} className={`bg-[var(--c-soft)] ${chipBase}`}>{urgencyEmoji(task.urgency)} {task.urgency}</button>
-                    </div>
-
-                    {isEditing && draft && (
-                      <div onClick={stop} className="mt-5 pt-5 border-t border-[var(--c-line)] space-y-3">
-                        <input
-                          autoFocus={editTaskFocus === 'all' || editTaskFocus === 'title'}
-                          value={draft.title}
-                          onChange={e => setEditTaskDraft({ ...draft, title: e.target.value })}
-                          placeholder="שם המשימה"
-                          className="w-full p-3 bg-[var(--c-soft)] rounded-xl font-bold text-sm pointer-events-auto"
-                        />
-                        <textarea
-                          value={draft.description || ''}
-                          onChange={e => setEditTaskDraft({ ...draft, description: e.target.value })}
-                          placeholder="תיאור (אופציונלי)"
-                          className="w-full p-3 bg-[var(--c-soft)] rounded-xl text-sm pointer-events-auto"
-                        />
-                        <div className="grid grid-cols-2 gap-2">
-                          <select
-                            autoFocus={editTaskFocus === 'urgency'}
-                            value={draft.urgency}
-                            onChange={e => setEditTaskDraft({ ...draft, urgency: e.target.value })}
-                            className={`p-3 bg-[var(--c-soft)] rounded-xl font-bold text-sm pointer-events-auto ${editTaskFocus === 'urgency' ? 'ring-2 ring-[var(--c-ring)]' : ''}`}
-                          >
-                            <option>דחופה מאד</option><option>גבוהה</option><option>סטנדרטית</option><option>נמוכה</option>
-                          </select>
-                          <select
-                            autoFocus={editTaskFocus === 'assignee'}
-                            value={draft.assignee}
-                            onChange={e => setEditTaskDraft({ ...draft, assignee: e.target.value })}
-                            className={`p-3 bg-[var(--c-soft)] rounded-xl font-bold text-sm pointer-events-auto ${editTaskFocus === 'assignee' ? 'ring-2 ring-[var(--c-ring)]' : ''}`}
-                          >
-                            <option>שוקי</option><option>הילה</option><option>כולם</option>
-                          </select>
-                        </div>
-                        <input
-                          type="date"
-                          autoFocus={editTaskFocus === 'date'}
-                          value={draft.target_date}
-                          onChange={e => setEditTaskDraft({ ...draft, target_date: e.target.value })}
-                          className={`w-full p-3 bg-[var(--c-soft)] rounded-xl text-sm font-bold text-center pointer-events-auto ${editTaskFocus === 'date' ? 'ring-2 ring-[var(--c-ring)]' : ''}`}
-                        />
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[11px] font-black text-slate-500 pr-1">תלות במשימה</label>
-                          <select
-                            autoFocus={editTaskFocus === 'depends'}
-                            value={draft.depends_on_task_id || ''}
-                            onChange={e => setEditTaskDraft({ ...draft, depends_on_task_id: e.target.value || null })}
-                            className="p-3 bg-[var(--c-soft)] rounded-xl text-sm font-bold pointer-events-auto"
-                          >
-                            <option value="">ללא תלות</option>
-                            {tasks.filter(t => t.id !== task.id && t.status !== 'סיימתי').map(t => (
-                              <option key={t.id} value={t.id}>{t.title}</option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="flex gap-2 pt-1">
-                          <button type="button" onClick={saveEditTask} className="flex-1 bg-[var(--c-primary)] text-white p-3 rounded-xl font-black text-sm pointer-events-auto hover:bg-[var(--c-primary-dark)] transition-all">💾 שמור שינויים</button>
-                          <button type="button" onClick={cancelEditTask} className="flex-1 bg-slate-200 text-slate-600 p-3 rounded-xl font-bold text-sm pointer-events-auto hover:bg-slate-300 transition-all">ביטול</button>
-                        </div>
-                      </div>
-                    )}
-
-                    <div onClick={stop} className="flex bg-slate-100 p-1 rounded-2xl mt-5 gap-1">
-                      <button
-                        disabled={!!blockedBy}
-                        onClick={() => updateTaskStatus(task.id!, 'לא התחלתי')}
-                        className={`flex-1 py-2.5 rounded-xl text-[11px] font-black transition-all pointer-events-auto disabled:opacity-50 disabled:cursor-not-allowed ${task.status === 'לא התחלתי' || !task.status ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-400'}`}
-                      >
-                        {isPlural ? 'לא התחלנו' : 'לא התחלתי'}
-                      </button>
-                      <button
-                        disabled={!!blockedBy}
-                        onClick={() => updateTaskStatus(task.id!, 'בתהליך')}
-                        className={`flex-1 py-2.5 rounded-xl text-[11px] font-black transition-all pointer-events-auto disabled:opacity-50 disabled:cursor-not-allowed ${task.status === 'בתהליך' ? 'bg-[var(--c-head)] text-white shadow-sm' : 'text-slate-400'}`}
-                      >
-                        בתהליך
-                      </button>
-                      <button
-                        disabled={!!blockedBy}
-                        onClick={() => updateTaskStatus(task.id!, 'סיימתי')}
-                        className="flex-1 py-2.5 rounded-xl text-[11px] font-black text-slate-400 hover:bg-[var(--c-primary)] hover:text-white transition-all pointer-events-auto disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {isPlural ? 'סיימנו' : 'סיימתי'}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {completedTasks.length > 0 && (
-              <div className="mt-16 pt-8 border-t-2 border-[var(--c-line)]">
-                <h3 className="font-black text-slate-400 text-sm uppercase mb-6 pr-2">✅ משימות שהסתיימו:</h3>
-                <div className="space-y-4 opacity-70 hover:opacity-100 transition-opacity">
-                  {completedTasks.map(task => <CompletedTaskCard key={task.id} task={task} onRestore={handleRestoreTask} onDelete={deleteTask} />)}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {activeView === 'TEMPLATES' && (
-          <div className="space-y-6">
-            <h2 className="font-black text-xl text-[var(--c-head)] flex items-center gap-2">
-              🧳 רשימות ציוד
-              <span className="text-[11px] font-bold text-slate-400">מסמנים מה נארז</span>
-            </h2>
-            {/* List type tabs — driven by what actually exists in the DB */}
-            <div className="flex gap-1 p-1 bg-white rounded-xl shadow-sm border border-[var(--c-line)] flex-wrap">
-              {equipListTypes.map(lt => (
-                <button key={lt} onClick={() => setEquipListType(lt)} className={`flex-1 min-w-[80px] py-2.5 rounded-lg text-sm font-bold transition-all pointer-events-auto ${equipListType === lt ? 'bg-[var(--c-primary)] text-white shadow-md' : 'text-slate-400 hover:bg-[var(--c-soft)]'}`}>{lt}</button>
-              ))}
-            </div>
-
-            {/* Free text input */}
-            <div className="bg-white p-5 rounded-[2rem] shadow-xl border border-[var(--c-line)] relative z-20">
-              <form onSubmit={handleEquipmentUpdate} className="space-y-3">
-                <textarea value={input} onChange={e => setInput(e.target.value)} placeholder="הוסף או הורד ציוד (למשל: מטען, אוזניות, תרופות שינה)" className="w-full p-4 bg-[var(--c-soft)] rounded-2xl text-sm min-h-[70px] border-none focus:ring-2 focus:ring-[var(--c-ring)] pointer-events-auto" />
-                <div className="flex gap-2">
-                  <button type="submit" className="flex-1 p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto bg-[var(--c-primary)] hover:bg-[var(--c-primary-dark)]">
-                    עדכן רשימה 🧳
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => resetPacking(equipListType)}
-                    disabled={packedEquip.length === 0}
-                    className="p-4 rounded-2xl text-white font-black text-lg active:scale-95 transition-all shadow-md pointer-events-auto bg-[var(--c-primary)] hover:bg-[var(--c-primary-dark)] disabled:bg-slate-300 disabled:cursor-not-allowed"
-                    title="אפס את כל הסימונים"
-                  >
-                    חדש ✨
-                  </button>
-                </div>
-              </form>
-              {status && (
-                <div className="mt-4 flex justify-center animate-in fade-in slide-in-from-bottom-2">
-                  <span className={`px-4 py-2 rounded-full text-xs font-bold shadow-sm ${status.includes('❌') ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-700'}`}>{status}</span>
-                </div>
-              )}
-            </div>
-
-            {/* Unpacked items by category */}
-            {equipCategories.map(cat => {
-              const items = unpackedEquip.filter(i => i.category === cat);
-              if (items.length === 0) return null;
-              return (
-                <div key={`eqcat-${cat}`} className="space-y-2">
-                  <h3 className="font-black text-[var(--c-head)] text-xs uppercase pr-2 border-r-4 border-[var(--c-primary)]">{cat}</h3>
-                  <div className="grid gap-2">
-                    {items.map(item => (
-                      <div key={item.id} className="flex justify-between items-center bg-white p-4 rounded-[1.5rem] shadow-sm border border-[var(--c-line)] hover:shadow-md transition-shadow">
-                        <div className="flex items-center gap-3 flex-1">
-                          <button onClick={() => togglePacked(item)} className="w-7 h-7 rounded-lg border-2 border-sky-300 bg-white flex items-center justify-center hover:bg-sky-50 transition-colors pointer-events-auto flex-shrink-0" />
-                          {editingId === item.id ? (
-                            <div className="flex items-center gap-2 flex-1">
-                              <input autoFocus value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedName(item.id!, 'equipment_items')} className="border-b-2 border-[var(--c-primary)] bg-sky-50 px-2 py-1 outline-none font-bold text-sm flex-1 pointer-events-auto" />
-                              <button onClick={() => saveEditedName(item.id!, 'equipment_items')} className="bg-green-100 text-green-700 p-2 rounded-lg pointer-events-auto shadow-sm">✅</button>
-                            </div>
-                          ) : (
-                            <span onClick={() => { setEditingId(item.id!); setEditNameValue(item.item_name); }} className="font-bold text-slate-800 cursor-pointer hover:text-[var(--c-primary)] pointer-events-auto flex-1">{item.item_name}</span>
-                          )}
-                        </div>
-                        <button onClick={() => { if (confirm(`למחוק לצמיתות את "${item.item_name}"?`)) deleteEquipmentItem(item); }} className="text-slate-300 hover:text-red-500 text-sm font-bold pointer-events-auto transition-colors px-2">🗑️</button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-
-            {unpackedEquip.length === 0 && (
-              <div className="text-center py-12 text-slate-400">
-                <span className="text-4xl block mb-3">🧳</span>
-                <span className="font-bold text-sm">הרשימה ריקה. הוסף ציוד בטקסט חופשי למעלה</span>
-              </div>
-            )}
-
-            {/* Packed items */}
-            {packedEquip.length > 0 && (
-              <div className="mt-8 pt-6 border-t-2 border-[var(--c-line)]">
-                <h3 className="font-black text-emerald-600 text-sm mb-4 pr-2">✅ נארז ({packedEquip.length})</h3>
-                <div className="grid gap-2 opacity-70">
-                  {packedEquip.map(item => (
-                    <div key={item.id} className="flex justify-between items-center bg-emerald-50 p-3 rounded-xl border border-emerald-100">
-                      <div className="flex items-center gap-3 flex-1">
-                        <button onClick={() => togglePacked(item)} className="w-7 h-7 rounded-lg border-2 border-emerald-400 bg-[var(--c-primary)] flex items-center justify-center pointer-events-auto">
-                          <span className="text-white text-sm font-black">✓</span>
-                        </button>
-                        <span className="font-medium text-emerald-800 line-through text-sm">{item.item_name}</span>
-                      </div>
-                      <span className="text-[10px] text-emerald-500 font-bold">{item.category}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {activeView === 'SHOPPING' && (
-          <div className="mb-6">
             <button
               type="button"
               onClick={() => setShowTemplatesPanel(v => !v)}
-              className="w-full bg-white border border-[var(--c-line)] rounded-2xl p-4 flex items-center justify-between shadow-sm pointer-events-auto hover:bg-[var(--c-soft)] transition-colors"
+              className="card card-tight card-interactive w-full flex items-center gap-3 mb-4"
+              aria-expanded={showTemplatesPanel}
             >
-              <span className="font-black text-[var(--c-head)]">📋 רשימות שמורות</span>
-              <span className="text-xs font-bold text-slate-400">
-                {shoppingTemplates.length} רשימות {showTemplatesPanel ? '▲' : '▼'}
+              <span className="tile" style={{ width: 36, height: 36 }}><Icon name="list" size={18} /></span>
+              <span className="flex-1 text-right t-label">רשימות שמורות</span>
+              <span className="t-micro t-dim num">{shoppingTemplates.length}</span>
+              <span className="t-faint" style={{ transform: showTemplatesPanel ? 'rotate(180deg)' : 'none', transition: 'transform var(--dur)' }}>
+                <Icon name="chevronDown" size={16} />
               </span>
             </button>
-          </div>
-        )}
 
-        {activeView === 'SHOPPING' && showTemplatesPanel && (
-          <div className="space-y-4 mb-6">
-            <div className="bg-amber-50 border-2 border-amber-200 p-4 rounded-2xl">
-              <p className="text-sm font-bold text-amber-900">
-                לחיצה על רשימה תוסיף את כל הפריטים שבה לרשימת הקניות. אפשר לערוך, ליצור חדשות, או למחוק.
-              </p>
-            </div>
-
-            {!showCreateTemplate && (
-              <button
-                type="button"
-                onClick={() => { setShowCreateTemplate(true); setNewTemplateName(''); setNewTemplateItemsText(''); }}
-                className="w-full bg-[var(--c-primary)] hover:bg-[var(--c-primary-dark)] text-white p-4 rounded-2xl font-black shadow-md active:scale-95 transition-all pointer-events-auto"
-              >
-                + צור רשימה חדשה
-              </button>
-            )}
-
-            {showCreateTemplate && (
-              <div className="bg-white p-5 rounded-[2rem] shadow-xl border border-amber-100 space-y-3">
-                <h3 className="font-black text-lg text-amber-900">רשימה חדשה</h3>
-                <input
-                  type="text"
-                  value={newTemplateName}
-                  onChange={(e) => setNewTemplateName(e.target.value)}
-                  placeholder="שם הרשימה (למשל: ארוחת שישי)"
-                  className="w-full p-3 bg-[var(--c-soft)] rounded-xl font-bold text-sm border-none outline-none focus:ring-2 focus:ring-[var(--c-ring)] pointer-events-auto"
-                />
-                <textarea
-                  value={newTemplateItemsText}
-                  onChange={(e) => setNewTemplateItemsText(e.target.value)}
-                  placeholder={"פריט אחד בכל שורה. למשל:\n🍅 עגבניות\n🥒 מלפפון\n🧀 גבינה"}
-                  className="w-full p-3 bg-[var(--c-soft)] rounded-xl text-sm min-h-[160px] border-none outline-none focus:ring-2 focus:ring-[var(--c-ring)] pointer-events-auto"
-                />
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={createTemplate}
-                    className="flex-1 bg-[var(--c-primary-dark)] text-white p-3 rounded-xl font-black text-sm hover:bg-amber-700 pointer-events-auto"
-                  >
-                    💾 שמור רשימה
+            {showTemplatesPanel && (
+              <div className="grid gap-3 mb-4 slide-up">
+                {!showCreateTemplate && (
+                  <button onClick={() => { setShowCreateTemplate(true); setNewTemplateName(''); setNewTemplateItemsText(''); }} className="btn btn-secondary">
+                    <Icon name="plus" size={18} /> צור רשימה חדשה
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => { setShowCreateTemplate(false); setNewTemplateName(''); setNewTemplateItemsText(''); }}
-                    className="bg-slate-200 text-slate-600 px-4 py-3 rounded-xl font-bold text-sm hover:bg-slate-300 pointer-events-auto"
-                  >
-                    ביטול
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {status && (
-              <div className="flex justify-center">
-                <span className={`px-4 py-2 rounded-full text-xs font-bold shadow-sm ${status.includes('❌') ? 'bg-red-100 text-red-600' : status.includes('⚠️') ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700'}`}>{status}</span>
-              </div>
-            )}
-
-            {templatesError ? (
-              <div className="bg-red-50 border-2 border-red-200 p-5 rounded-2xl">
-                <p className="font-black text-red-800 text-sm mb-1">⚠️ הרשימות לא נטענו</p>
-                <p className="text-xs font-bold text-red-600 mb-2">אין הרשאת גישה לטבלת הרשימות, או שהשכבה שמגישה את הנתונים עוד לא מכירה אותה.</p>
-                <p className="text-[11px] font-mono text-red-500 break-all" dir="ltr">{templatesError}</p>
-              </div>
-            ) : shoppingTemplates.length === 0 ? (
-              <div className="bg-white p-8 rounded-2xl text-center text-slate-400">
-                <span className="text-4xl block mb-3">📝</span>
-                <p className="font-bold text-sm">אין עדיין רשימות. צור רשימה ראשונה למעלה.</p>
-              </div>
-            ) : (
-              <div className="grid gap-3">
-                {shoppingTemplates.map(tpl => {
+                )}
+                {showCreateTemplate && (
+                  <div className="card grid gap-3">
+                    <h3 className="t-title">רשימה חדשה</h3>
+                    <input className="field" value={newTemplateName} onChange={e => setNewTemplateName(e.target.value)} placeholder="שם הרשימה" aria-label="שם הרשימה" />
+                    <textarea className="field" style={{ minHeight: 150 }} value={newTemplateItemsText} onChange={e => setNewTemplateItemsText(e.target.value)} placeholder={'פריט אחד בכל שורה'} aria-label="פריטי הרשימה" />
+                    <div className="flex gap-2">
+                      <button onClick={createTemplate} className="btn btn-primary flex-1">שמור רשימה</button>
+                      <button onClick={() => setShowCreateTemplate(false)} className="btn btn-secondary">ביטול</button>
+                    </div>
+                  </div>
+                )}
+                {templatesError ? (
+                  <div className="note note-danger" role="alert">
+                    <Icon name="alert" size={18} />
+                    <span className="flex-1">
+                      הרשימות לא נטענו — כנראה חסרות הרשאות לטבלה.
+                      <span className="block t-micro mt-1" dir="ltr">{templatesError}</span>
+                    </span>
+                  </div>
+                ) : shoppingTemplates.length === 0 ? (
+                  <EmptyState icon="list" title="אין רשימות שמורות" body="רשימה שמורה מוסיפה קבוצת פריטים לקניות בלחיצה אחת." />
+                ) : shoppingTemplates.map(tpl => {
                   const isExpanded = expandedTemplateId === tpl.id;
-                  const isAdding = addingTemplateId === tpl.id;
+                  const cats = Array.from(new Set(tpl.items.map(it => (it.category || '').trim()).filter(Boolean)));
                   return (
-                    <div key={tpl.id} className="bg-white rounded-[2rem] shadow-md border border-amber-50 overflow-hidden">
-                      <div className="p-4 flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setExpandedTemplateId(isExpanded ? null : tpl.id)}
-                          className="flex-1 text-right pointer-events-auto"
-                        >
-                          <h3 className="font-black text-lg text-slate-800">{tpl.name}</h3>
-                          <p className="text-[11px] font-bold text-slate-400 mt-0.5">
-                            {tpl.items.length} פריטים {isExpanded ? '— לחיצה לסגירה' : '— לחיצה לתצוגה'}
-                          </p>
+                    <div key={tpl.id} className="card card-tight">
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => setExpandedTemplateId(isExpanded ? null : tpl.id)} className="flex-1 text-right" aria-expanded={isExpanded}>
+                          <span className="block t-label" style={{ color: 'var(--t-primary)', fontSize: 15 }}>{tpl.name}</span>
+                          <span className="block t-micro t-dim mt-0.5"><span className="num">{tpl.items.length}</span> פריטים</span>
                         </button>
-                        <button
-                          type="button"
-                          disabled={isAdding}
-                          onClick={() => addTemplateToShopping(tpl)}
-                          className="bg-[var(--c-primary)] hover:bg-[var(--c-primary-dark)] text-white px-4 py-3 rounded-xl font-black text-sm shadow-md pointer-events-auto disabled:bg-rose-300 disabled:cursor-not-allowed"
-                          title="הוסף את כל הפריטים לקניות"
-                        >
-                          {isAdding ? '...' : '🛒 הוסף'}
+                        <button onClick={() => addTemplateToShopping(tpl)} disabled={addingTemplateId === tpl.id} className="btn btn-primary btn-xs">
+                          {addingTemplateId === tpl.id ? '…' : 'הוסף'}
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => deleteTemplate(tpl)}
-                          className="bg-slate-100 text-slate-400 hover:bg-red-100 hover:text-red-600 w-9 h-9 rounded-xl font-black text-xs pointer-events-auto"
-                          title="מחק רשימה"
-                        >
-                          🗑️
+                        <button onClick={() => deleteTemplate(tpl)} className="btn-icon btn-icon-danger" aria-label={`מחק את ${tpl.name}`}>
+                          <Icon name="trash" size={17} />
                         </button>
                       </div>
-                      {isExpanded && tpl.items.length > 0 && (() => {
-                        const tplCats = Array.from(new Set(tpl.items.map(it => (it.category || '').trim()).filter(Boolean)));
-                        const hasCats = tplCats.length > 0;
-                        return (
-                          <div className="px-4 pb-4 pt-2 border-t border-[var(--c-line)] bg-[var(--c-soft)]">
-                            {hasCats ? (
-                              <div className="space-y-3">
-                                {tplCats.map(cat => (
-                                  <div key={`tplcat-${tpl.id}-${cat}`}>
-                                    <h4 className="font-black text-[var(--c-head)] text-xs uppercase pr-2 border-r-4 border-[var(--c-primary)] mb-1">{cat}</h4>
-                                    <ul className="space-y-1">
-                                      {tpl.items.filter(it => (it.category || '').trim() === cat).map(it => (
-                                        <li key={it.id} className="text-sm font-bold text-slate-700">
-                                          <span className="text-[var(--c-primary)] mr-1">•</span> {it.item_name}
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  </div>
-                                ))}
-                                {tpl.items.some(it => !(it.category || '').trim()) && (
-                                  <div>
-                                    <h4 className="font-black text-[var(--c-head)] text-xs uppercase pr-2 border-r-4 border-[var(--c-line)] mb-1">כללי</h4>
-                                    <ul className="space-y-1">
-                                      {tpl.items.filter(it => !(it.category || '').trim()).map(it => (
-                                        <li key={it.id} className="text-sm font-bold text-slate-700">
-                                          <span className="text-[var(--c-primary)] mr-1">•</span> {it.item_name}
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  </div>
-                                )}
+                      {isExpanded && (
+                        <div className="mt-3 pt-3 border-t border-[var(--border-subtle)] grid gap-3">
+                          {(cats.length ? cats : ['']).map(cat => {
+                            const items = cat ? tpl.items.filter(it => (it.category || '').trim() === cat) : tpl.items.filter(it => !(it.category || '').trim());
+                            if (!items.length) return null;
+                            return (
+                              <div key={`tc-${cat}`}>
+                                {cat && <h4 className="eyebrow mb-2">{cat}</h4>}
+                                <ul className="grid gap-1">
+                                  {items.map(it => <li key={it.id} className="t-body t-dim">{it.item_name}</li>)}
+                                </ul>
                               </div>
-                            ) : (
-                              <ul className="space-y-1">
-                                {tpl.items.map(it => (
-                                  <li key={it.id} className="text-sm font-bold text-slate-700">
-                                    <span className="text-[var(--c-primary)] mr-1">•</span> {it.item_name}
-                                  </li>
-                                ))}
+                            );
+                          })}
+                          {cats.length > 0 && tpl.items.some(it => !(it.category || '').trim()) && (
+                            <div>
+                              <h4 className="eyebrow mb-2">כללי</h4>
+                              <ul className="grid gap-1">
+                                {tpl.items.filter(it => !(it.category || '').trim()).map(it => <li key={it.id} className="t-body t-dim">{it.item_name}</li>)}
                               </ul>
-                            )}
-                          </div>
-                        );
-                      })()}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
               </div>
             )}
-          </div>
+
+            {showCategorize && (() => {
+              // Anything the app filed on its own, plus anything sitting in כללי.
+              const pending = filteredShoppingList.filter(s => s.category_auto === true || !s.category || s.category === 'כללי');
+              return (
+                <div className="card mb-4 slide-up">
+                  <div className="flex items-center gap-2 mb-3">
+                    <h3 className="t-title flex-1">חלוקה לקטגוריות</h3>
+                    <button className="btn-icon" onClick={() => setShowCategorize(false)} aria-label="סגור"><Icon name="x" size={17} /></button>
+                  </div>
+                  {pending.length === 0 ? (
+                    <p className="t-body t-dim">הכל מסווג.</p>
+                  ) : (
+                    <>
+                      <p className="t-micro t-dim mb-3">פריטים שלא סווגו ידנית. הסיווג שהאפליקציה בחרה מופיע כברירת מחדל.</p>
+                      <div className="grid gap-2 max-h-[55vh] overflow-y-auto">
+                        {pending.map(item => {
+                          const guessed = item.category && item.category !== 'כללי' ? item.category : null;
+                          const chosen = categorizeAssignments[item.id] ?? (guessed || 'כללי');
+                          return (
+                            <div key={`cz-${item.id}`} className="grid gap-2 p-3 rounded-[var(--r-sm)]" style={{ background: 'var(--s-sunken)' }}>
+                              <div className="flex items-center gap-2">
+                                <span className="flex-1 t-body">{item.item_name}</span>
+                                {guessed && <span className="chip">{guessed}</span>}
+                                <select
+                                  className="field"
+                                  style={{ width: 120, flex: 'none', minHeight: 38 }}
+                                  value={chosen}
+                                  onChange={e => setCategorizeAssignments(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                  aria-label={`קטגוריה ל${item.item_name}`}
+                                >
+                                  <option value="כללי">כללי</option>
+                                  {pickCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                                  <option value="__other__">+ אחר…</option>
+                                </select>
+                              </div>
+                              {chosen === '__other__' && (
+                                <input className="field" value={categorizeNewCats[item.id] || ''} onChange={e => setCategorizeNewCats(prev => ({ ...prev, [item.id]: e.target.value }))} placeholder="קטגוריה חדשה" aria-label="קטגוריה חדשה" />
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="flex gap-2 mt-3">
+                        <button onClick={applyCategorizeAssignments} className="btn btn-primary flex-1">שמור שינויים</button>
+                        <button onClick={() => setShowCategorize(false)} className="btn btn-secondary">ביטול</button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
+
+            {wordChoiceTasks.length > 0 && (
+              <div className="mb-4 grid gap-3">
+                {wordChoiceTasks.map((task, idx) => (
+                  <div key={`wc-${idx}`} className="card">
+                    <p className="t-body mb-3">
+                      אחת מהמילים ב<b>{task.originalName}</b> היא מוצר בפני עצמו. למה התכוונת?
+                    </p>
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      <button onClick={() => handleResolveWordChoice(task, task.originalName)} className="btn btn-primary btn-xs">{task.originalName}</button>
+                      {task.options.map(opt => (
+                        <button key={opt} onClick={() => handleResolveWordChoice(task, opt)} className="chip chip-btn">{opt}</button>
+                      ))}
+                    </div>
+                    <button onClick={() => setWordChoiceTasks(prev => prev.filter(t => t !== task))} className="btn btn-ghost">ביטול</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {addedSummary.length > 0 && (
+              <div className="note note-ok mb-4 slide-up" role="status">
+                <Icon name="check" size={18} />
+                <div className="flex-1">
+                  <span className="t-label block mb-2">נוסף לקניות</span>
+                  <ul className="grid gap-1">
+                    {addedSummary.map((a, i) => (
+                      <li key={`ad-${i}`} className="flex items-center gap-2 flex-wrap t-body">
+                        <span>{a.name}</span>
+                        <span className="chip">{a.category}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <button className="btn-icon" style={{ width: 28, height: 28 }} onClick={() => setAddedSummary([])} aria-label="סגור"><Icon name="x" size={15} /></button>
+              </div>
+            )}
+
+            {duplicateShoppingAlerts.length > 0 && (
+              <div className="mb-4 grid gap-2">
+                {duplicateShoppingAlerts.map(name => (
+                  <div key={`dup-${name}`} className="note note-warn">
+                    <Icon name="alert" size={18} />
+                    <span className="flex-1">{name} כבר ברשימה</span>
+                    <button onClick={() => setDuplicateShoppingAlerts(prev => prev.filter(n => n !== name))} className="btn btn-secondary btn-xs">הבנתי</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {loading ? (
+              <div className="grid gap-3">{[0, 1, 2, 3].map(i => <div key={i} className="skel" style={{ height: 78 }} />)}</div>
+            ) : filteredShoppingList.length === 0 ? (
+              <EmptyState
+                icon={searchTerm ? 'search' : 'cart'}
+                title={searchTerm ? 'אין תוצאות' : 'רשימת הקניות ריקה'}
+                body={searchTerm ? 'אין פריט שתואם את החיפוש.' : 'הוסף פריטים למעלה, או השתמש ברשימה שמורה.'}
+                actionLabel={searchTerm ? 'נקה חיפוש' : undefined}
+                onAction={searchTerm ? () => setSearchTerm('') : undefined}
+              />
+            ) : sortBy === 'category' ? (
+              <div className="grid gap-6">
+                {displayCategories.map(cat => {
+                  const list = filteredShoppingList.filter(s => (s.category || 'כללי') === cat);
+                  const isAddOpen = categoryAddOpen === cat;
+                  if (!list.length && !isAddOpen && searchTerm) return null;
+                  return (
+                    <section key={`sc-${cat}`} className="grid gap-3">
+                      <div className="flex items-center gap-2">
+                        {editingCategoryName === cat ? (
+                          <>
+                            <input
+                              autoFocus
+                              className="field flex-1"
+                              value={categoryNameValue}
+                              onChange={e => setCategoryNameValue(e.target.value)}
+                              onKeyDown={e => { if (e.key === 'Enter') saveRenameCategory(cat); if (e.key === 'Escape') setEditingCategoryName(null); }}
+                              aria-label="שם הקטגוריה"
+                            />
+                            <button className="btn-icon" onClick={() => saveRenameCategory(cat)} aria-label="שמור שם"><Icon name="check" size={18} /></button>
+                            <button className="btn-icon" onClick={() => setEditingCategoryName(null)} aria-label="ביטול"><Icon name="x" size={18} /></button>
+                          </>
+                        ) : (
+                          <>
+                            <h2 className="eyebrow flex-1">{cat}</h2>
+                            {cat !== 'כללי' && (
+                              <>
+                                <button className="btn-icon" onClick={() => startRenameCategory(cat)} aria-label={`שנה שם ל${cat}`}><Icon name="pencil" size={17} /></button>
+                                <button className="btn-icon btn-icon-danger" onClick={() => deleteCategory(cat)} aria-label={`מחק את ${cat}`}><Icon name="trash" size={17} /></button>
+                              </>
+                            )}
+                            <button
+                              className="btn btn-ghost btn-xs"
+                              onClick={() => { setCategoryAddOpen(prev => (prev === cat ? null : cat)); setCategoryAddInput(''); }}
+                            >
+                              {isAddOpen ? 'סגור' : '+ הוסף'}
+                            </button>
+                          </>
+                        )}
+                      </div>
+                      {isAddOpen && (
+                        <form onSubmit={e => handleCategoryAdd(e, cat)} className="flex gap-2">
+                          <input
+                            autoFocus
+                            className="field flex-1"
+                            value={categoryAddInput}
+                            onChange={e => setCategoryAddInput(e.target.value)}
+                            placeholder="תפוזים אפרסק, קישוא צהוב"
+                            aria-label={`הוסף פריטים ל${cat}`}
+                          />
+                          <button type="submit" className="btn btn-primary btn-sm" disabled={categoryAddLoading || !categoryAddInput.trim()}>
+                            {categoryAddLoading ? '…' : 'הוסף'}
+                          </button>
+                        </form>
+                      )}
+                      {list.map(s => <ShoppingCard key={s.id} item={s} {...shopCardProps(s)} />)}
+                    </section>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="grid gap-3">
+                {filteredShoppingList.map(s => <ShoppingCard key={s.id} item={s} {...shopCardProps(s)} />)}
+              </div>
+            )}
+          </>
         )}
 
-        {activeView === 'SETTINGS' && (
-          <div className="space-y-6">
-            <div className="bg-white p-6 rounded-[2rem] shadow-md border border-[var(--c-line)]">
-              <h2 className="font-black text-xl text-[var(--c-head)] mb-1">🎨 עיצוב</h2>
-              <p className="text-xs text-slate-400 font-bold mb-4">בחר ערכת עיצוב — מוחלת מיד ונשמרת במכשיר</p>
+        {/* ---------- TASKS ---------- */}
+        {activeView === 'TASKS' && (
+          <>
+            <button onClick={() => setShowTaskForm(v => !v)} className="btn btn-primary w-full mb-4">
+              <Icon name={showTaskForm ? 'x' : 'plus'} size={18} /> {showTaskForm ? 'סגור טופס' : 'משימה חדשה'}
+            </button>
+
+            {showTaskForm && (
+              <form
+                onSubmit={e => { e.preventDefault(); persistNewTask(false); }}
+                className="card mb-6 grid gap-3"
+              >
+                <div>
+                  <label className="field-label" htmlFor="nt-title">שם המשימה</label>
+                  <input id="nt-title" className="field" value={newTask.title} onChange={e => setNewTask({ ...newTask, title: e.target.value })} placeholder="מה צריך לעשות" />
+                </div>
+                <div>
+                  <label className="field-label" htmlFor="nt-desc">תיאור</label>
+                  <textarea id="nt-desc" className="field" value={newTask.description} onChange={e => setNewTask({ ...newTask, description: e.target.value })} placeholder="אופציונלי" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="field-label" htmlFor="nt-urg">דחיפות</label>
+                    <select id="nt-urg" className="field" value={newTask.urgency} onChange={e => setNewTask({ ...newTask, urgency: e.target.value })}>
+                      <option>דחופה מאד</option><option>גבוהה</option><option>סטנדרטית</option><option>נמוכה</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="field-label" htmlFor="nt-who">באחריות</label>
+                    <select id="nt-who" className="field" value={newTask.assignee} onChange={e => setNewTask({ ...newTask, assignee: e.target.value })}>
+                      <option>שוקי</option><option>הילה</option><option>כולם</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="field-label" htmlFor="nt-date">תאריך יעד</label>
+                  <input id="nt-date" type="date" className="field field-center" value={newTask.target_date} onChange={e => setNewTask({ ...newTask, target_date: e.target.value })} />
+                </div>
+                <div>
+                  <label className="field-label" htmlFor="nt-dep">תלות במשימה</label>
+                  <select id="nt-dep" className="field" value={newTask.depends_on_task_id || ''} onChange={e => setNewTask({ ...newTask, depends_on_task_id: e.target.value || null })}>
+                    <option value="">ללא תלות</option>
+                    {activeTasks.map(t => <option key={t.id} value={t.id}>{t.title}</option>)}
+                  </select>
+                </div>
+                <div className="flex gap-2">
+                  <button type="submit" className="btn btn-primary flex-1">שמור</button>
+                  <button type="button" onClick={() => persistNewTask(true)} className="btn btn-secondary flex-1">
+                    <Icon name="whatsapp" size={18} /> שמור ושלח
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {loading ? (
+              <div className="grid gap-3">{[0, 1, 2].map(i => <div key={i} className="skel" style={{ height: 150 }} />)}</div>
+            ) : activeTasks.length === 0 ? (
+              <EmptyState icon="pin" title="אין משימות פתוחות" body="הוסף משימה, אפשר גם עם תלות במשימה אחרת." />
+            ) : (
               <div className="grid gap-3">
+                {activeTasks.map(task => {
+                  const blockedBy = getBlockingTask(task);
+                  const isEditing = editingTaskId === task.id;
+                  const isPoofing = poofingIds.includes(task.id!);
+                  const draft = isEditing ? editTaskDraft : null;
+                  const isPlural = (task.assignee || '').includes('כולם');
+                  const stop = (e: React.MouseEvent) => e.stopPropagation();
+                  return (
+                    <div
+                      key={task.id}
+                      className={`card spine ${isPoofing ? 'task-poof' : ''}`}
+                      style={{
+                        ['--spine-c' as any]: urgencyTone(task.urgency),
+                        opacity: blockedBy ? .62 : 1,
+                        boxShadow: isEditing ? 'var(--sh-focus)' : undefined,
+                      }}
+                    >
+                      <div className="flex items-start gap-2">
+                        <button className="flex-1 text-right tap-text" onClick={() => !isPoofing && startEditTask(task, 'all')}>
+                          <h3 className="t-title">{task.title}</h3>
+                        </button>
+                        <button onClick={e => { stop(e); deleteTask(task); }} className="btn-icon btn-icon-danger" aria-label={`מחק את ${task.title}`}>
+                          <Icon name="trash" size={17} />
+                        </button>
+                      </div>
+
+                      {task.description && <p className="t-body t-dim mt-1">{task.description}</p>}
+
+                      {blockedBy && (
+                        <div className="note note-warn mt-3">
+                          <Icon name="clock" size={17} />
+                          <span className="flex-1">ממתין למשימה: <b>{blockedBy.title}</b></span>
+                        </div>
+                      )}
+
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        <button className="chip chip-btn chip-editable" onClick={e => { stop(e); startEditTask(task, 'assignee'); }}>{task.assignee}</button>
+                        <button className="chip chip-btn chip-editable num" onClick={e => { stop(e); startEditTask(task, 'date'); }}>{fmtDate(task.target_date)}</button>
+                        <button className="chip chip-btn chip-editable" onClick={e => { stop(e); startEditTask(task, 'urgency'); }}>{urgencyIcon(task.urgency)} {task.urgency}</button>
+                      </div>
+
+                      {isEditing && draft && (
+                        <div className="mt-4 pt-4 border-t border-[var(--border-subtle)] grid gap-3">
+                          <input
+                            className="field"
+                            autoFocus={editTaskFocus === 'all' || editTaskFocus === 'title'}
+                            value={draft.title}
+                            onChange={e => setEditTaskDraft({ ...draft, title: e.target.value })}
+                            aria-label="שם המשימה"
+                          />
+                          <textarea className="field" value={draft.description || ''} onChange={e => setEditTaskDraft({ ...draft, description: e.target.value })} aria-label="תיאור" />
+                          <div className="grid grid-cols-2 gap-3">
+                            <select
+                              className="field"
+                              ref={el => { if (el && editTaskFocus === 'urgency') el.focus(); }}
+                              value={draft.urgency}
+                              onChange={e => setEditTaskDraft({ ...draft, urgency: e.target.value })}
+                              aria-label="דחיפות"
+                            >
+                              <option>דחופה מאד</option><option>גבוהה</option><option>סטנדרטית</option><option>נמוכה</option>
+                            </select>
+                            <select
+                              className="field"
+                              ref={el => { if (el && editTaskFocus === 'assignee') el.focus(); }}
+                              value={draft.assignee}
+                              onChange={e => setEditTaskDraft({ ...draft, assignee: e.target.value })}
+                              aria-label="באחריות"
+                            >
+                              <option>שוקי</option><option>הילה</option><option>כולם</option>
+                            </select>
+                          </div>
+                          <input
+                            type="date"
+                            className="field field-center"
+                            ref={el => { if (el && editTaskFocus === 'date') el.focus(); }}
+                            value={draft.target_date}
+                            onChange={e => setEditTaskDraft({ ...draft, target_date: e.target.value })}
+                            aria-label="תאריך יעד"
+                          />
+                          <div>
+                            <label className="field-label">תלות במשימה</label>
+                            <select
+                              className="field"
+                              ref={el => { if (el && editTaskFocus === 'depends') el.focus(); }}
+                              value={draft.depends_on_task_id || ''}
+                              onChange={e => setEditTaskDraft({ ...draft, depends_on_task_id: e.target.value || null })}
+                            >
+                              <option value="">ללא תלות</option>
+                              {tasks.filter(t => t.id !== task.id && t.status !== 'סיימתי').map(t => <option key={t.id} value={t.id}>{t.title}</option>)}
+                            </select>
+                          </div>
+                          <div className="flex gap-2">
+                            <button onClick={saveEditTask} className="btn btn-primary flex-1">שמור שינויים</button>
+                            <button onClick={cancelEditTask} className="btn btn-secondary">ביטול</button>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="seg mt-4" role="group" aria-label="סטטוס המשימה">
+                        {([['לא התחלתי', isPlural ? 'לא התחלנו' : 'לא התחלתי'], ['בתהליך', 'בתהליך'], ['סיימתי', isPlural ? 'סיימנו' : 'סיימתי']] as [string, string][]).map(([val, label]) => (
+                          <button
+                            key={val}
+                            className="seg-item"
+                            aria-pressed={(task.status || 'לא התחלתי') === val}
+                            disabled={!!blockedBy}
+                            onClick={() => updateTaskStatus(task.id!, val)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {completedTasks.length > 0 && (
+              <section className="mt-8">
+                <h2 className="eyebrow mb-3">משימות שהסתיימו</h2>
+                <div className="grid gap-3">
+                  {completedTasks.map(task => <CompletedTaskCard key={task.id} task={task} onRestore={handleRestoreTask} onDelete={deleteTask} />)}
+                </div>
+              </section>
+            )}
+          </>
+        )}
+
+        {/* ---------- TEMPLATES = packing lists ---------- */}
+        {activeView === 'TEMPLATES' && (
+          <>
+            <div className="seg mb-4 flex-wrap" role="tablist" aria-label="רשימות ציוד">
+              {equipListTypes.map(lt => (
+                <button key={lt} role="tab" aria-selected={equipListType === lt} onClick={() => setEquipListType(lt)} className="seg-item" style={{ minWidth: 92 }}>
+                  {lt}
+                </button>
+              ))}
+            </div>
+
+            <form onSubmit={handleEquipmentUpdate} className="card mb-4 grid gap-3">
+              <label className="field-label" htmlFor="eq-text">הוסף או הורד ציוד</label>
+              <textarea id="eq-text" className="field" value={equipInput} onChange={e => setEquipInput(e.target.value)} placeholder="למשל: מטען, אוזניות, תרופות שינה" />
+              <div className="flex gap-2">
+                <button type="submit" className="btn btn-primary flex-1" disabled={!equipInput.trim()}>
+                  <Icon name="plus" size={18} /> עדכן רשימה
+                </button>
+                <button type="button" onClick={() => resetPacking(equipListType)} disabled={packedEquip.length === 0} className="btn btn-secondary">
+                  <Icon name="refresh" size={18} /> חדש
+                </button>
+              </div>
+            </form>
+
+            {loading ? (
+              <div className="grid gap-2">{[0, 1, 2, 3, 4].map(i => <div key={i} className="skel" style={{ height: 60 }} />)}</div>
+            ) : unpackedEquip.length === 0 ? (
+              <EmptyState
+                icon="check"
+                title={packedEquip.length ? 'הכל ארוז' : 'הרשימה ריקה'}
+                body={packedEquip.length ? 'כל הפריטים מסומנים. "חדש" מאפס את הסימונים לאריזה הבאה.' : 'הוסף ציוד בטקסט חופשי למעלה.'}
+              />
+            ) : (
+              <div className="grid gap-6">
+                {equipCategories.map(cat => {
+                  const items = unpackedEquip.filter(i => i.category === cat);
+                  if (!items.length) return null;
+                  return (
+                    <section key={`eq-${cat}`} className="grid gap-2">
+                      <h2 className="eyebrow">{cat}</h2>
+                      {items.map(item => (
+                        <div key={item.id} className="card card-tight spine flex items-center gap-3" style={{ ['--spine-c' as any]: spineFor(cat) }}>
+                          <button
+                            onClick={() => togglePacked(item)}
+                            role="checkbox"
+                            aria-checked={false}
+                            aria-label={`סמן ${item.item_name} כנארז`}
+                            className="flex-none grid place-items-center"
+                            style={{ width: 30, height: 30, borderRadius: 9, border: '2px solid var(--border-strong)', background: 'var(--s-raised)' }}
+                          />
+                          {editingId === item.id ? (
+                            <>
+                              <input
+                                autoFocus
+                                className="field flex-1"
+                                value={editNameValue}
+                                onChange={e => setEditNameValue(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter') saveEditedName(item.id!, 'equipment_items'); if (e.key === 'Escape') setEditingId(null); }}
+                                aria-label="שם הפריט"
+                              />
+                              <button className="btn-icon" onClick={() => saveEditedName(item.id!, 'equipment_items')} aria-label="שמור"><Icon name="check" size={18} /></button>
+                              <button className="btn-icon" onClick={() => setEditingId(null)} aria-label="ביטול"><Icon name="x" size={18} /></button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                className="flex-1 text-right t-body tap-text"
+                                onClick={() => { setEditingId(item.id!); setEditNameValue(item.item_name); }}
+                              >
+                                {item.item_name}
+                              </button>
+                              <button className="btn-icon btn-icon-danger" onClick={() => deleteEquipmentItem(item)} aria-label={`מחק את ${item.item_name}`}>
+                                <Icon name="trash" size={17} />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </section>
+                  );
+                })}
+              </div>
+            )}
+
+            {packedEquip.length > 0 && (
+              <section className="mt-8">
+                <h2 className="eyebrow mb-3">נארז · <span className="num">{packedEquip.length}</span></h2>
+                <div className="grid gap-2">
+                  {packedEquip.map(item => (
+                    <div key={item.id} className="card card-tight flex items-center gap-3" style={{ background: 'var(--st-ok-bg)', borderColor: 'var(--st-ok-border)' }}>
+                      <button
+                        onClick={() => togglePacked(item)}
+                        role="checkbox"
+                        aria-checked
+                        aria-label={`בטל סימון של ${item.item_name}`}
+                        className="flex-none grid place-items-center"
+                        style={{ width: 30, height: 30, borderRadius: 9, background: 'var(--st-ok)', color: '#fff' }}
+                      >
+                        <Icon name="check" size={17} />
+                      </button>
+                      <span className="flex-1 t-body" style={{ textDecoration: 'line-through', color: 'var(--st-ok)' }}>{item.item_name}</span>
+                      <span className="chip">{item.category}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+          </>
+        )}
+
+        {/* ---------- SETTINGS ---------- */}
+        {activeView === 'SETTINGS' && (
+          <div className="grid gap-4">
+            <section className="card">
+              <h2 className="t-title mb-1">עיצוב</h2>
+              <p className="t-body t-dim mb-4">שש ערכות שונות. הבחירה מוחלת מיד ונשמרת במכשיר.</p>
+              <div className="grid gap-2">
                 {THEME_OPTIONS.map(t => {
                   const active = appTheme === t.key;
                   return (
                     <button
                       key={t.key}
-                      type="button"
                       onClick={() => applyTheme(t.key)}
-                      className={`flex items-center gap-3 p-4 rounded-2xl border-2 text-right transition-all pointer-events-auto ${active ? 'border-[var(--c-primary)] ring-2 ring-[var(--c-ring)] bg-[var(--c-soft)]' : 'border-[var(--c-line)] bg-white hover:bg-[var(--c-soft)]'}`}
+                      aria-pressed={active}
+                      className="flex items-center gap-3 p-3 text-right rounded-[var(--r-md)] border"
+                      style={{
+                        borderColor: active ? 'var(--c-primary)' : 'var(--border-subtle)',
+                        background: active ? 'var(--s-sunken)' : 'var(--s-raised)',
+                        boxShadow: active ? 'var(--sh-focus)' : 'none',
+                      }}
                     >
-                      <span className="flex gap-1.5 flex-shrink-0" dir="ltr">
-                        <span className="w-6 h-6 rounded-full border border-black/10" style={{ background: t.bg }} />
-                        <span className="w-6 h-6 rounded-full" style={{ background: t.primary }} />
-                        <span className="w-6 h-6 rounded-full" style={{ background: t.head }} />
+                      <span className="flex gap-1.5 flex-none" dir="ltr">
+                        {[t.bg, t.primary, t.head].map((c, i) => (
+                          <span key={i} style={{ width: 22, height: 22, borderRadius: 999, background: c, border: '1px solid rgb(0 0 0 / .12)' }} />
+                        ))}
                       </span>
                       <span className="flex-1">
-                        <span className="block font-black text-slate-800">{t.name}</span>
-                        <span className="block text-[11px] font-bold text-slate-400">{t.desc}</span>
+                        <span className="block t-label" style={{ color: 'var(--t-primary)' }}>{t.name}</span>
+                        <span className="block t-micro t-dim mt-0.5">{t.desc}</span>
                       </span>
-                      {active && <span className="text-[var(--c-primary)] font-black text-lg flex-shrink-0">✓</span>}
+                      {active && <Icon name="check" size={18} />}
                     </button>
                   );
                 })}
               </div>
-            </div>
+            </section>
 
-            <div className="bg-white p-6 rounded-[2rem] shadow-md border border-[var(--c-line)]">
-              <h2 className="font-black text-xl text-[var(--c-head)] mb-1">🔤 פונט</h2>
-              <p className="text-xs text-slate-400 font-bold mb-4">בחר פונט לכל האפליקציה — מוחל מיד ונשמר במכשיר</p>
+            <section className="card">
+              <h2 className="t-title mb-1">פונט</h2>
+              <p className="t-body t-dim mb-4">כל אפשרות מוצגת בפונט של עצמה.</p>
               <div className="grid gap-2">
                 {FONT_OPTIONS.map(f => {
                   const active = appFont === f.key;
                   return (
                     <button
                       key={f.key}
-                      type="button"
                       onClick={() => applyFont(f.key)}
-                      style={{ fontFamily: `${f.varName}, sans-serif` }}
-                      className={`flex items-center gap-3 p-4 rounded-2xl border-2 text-right transition-all pointer-events-auto ${active ? 'border-[var(--c-primary)] ring-2 ring-[var(--c-ring)] bg-[var(--c-soft)]' : 'border-[var(--c-line)] bg-white hover:bg-[var(--c-soft)]'}`}
+                      aria-pressed={active}
+                      style={{
+                        fontFamily: `${f.varName}, sans-serif`,
+                        borderColor: active ? 'var(--c-primary)' : 'var(--border-subtle)',
+                        background: active ? 'var(--s-sunken)' : 'var(--s-raised)',
+                        boxShadow: active ? 'var(--sh-focus)' : 'none',
+                      }}
+                      className="flex items-center gap-3 p-3 text-right rounded-[var(--r-md)] border"
                     >
                       <span className="flex-1">
-                        <span className="block font-bold text-lg text-slate-800">{f.name}</span>
-                        <span className="block text-xs text-slate-400">אבגדה ABC 123 — {f.desc}</span>
+                        <span className="block" style={{ fontSize: 17, fontWeight: 600, color: 'var(--t-primary)' }}>{f.name}</span>
+                        <span className="block t-micro t-dim mt-0.5">אבגדה ABC <span className="num">123</span> · {f.desc}</span>
                       </span>
-                      {active && <span className="text-[var(--c-primary)] font-black text-lg flex-shrink-0">✓</span>}
+                      {active && <Icon name="check" size={18} />}
                     </button>
                   );
                 })}
               </div>
-            </div>
+            </section>
+
+            <section className="card">
+              <h2 className="t-title mb-1">גרסה</h2>
+              <p className="t-body t-dim">הבית של ניאו · גרסה 2.0</p>
+            </section>
           </div>
         )}
       </div>
+
+      {/* ---------- bottom navigation ---------- */}
+      <nav className="tabbar" aria-label="ניווט ראשי">
+        <div className="max-w-2xl mx-auto flex w-full">
+          {NAV.map(n => (
+            <button
+              key={n.view}
+              className="tabbar-item"
+              aria-current={activeView === n.view ? 'page' : undefined}
+              onClick={() => changeView(n.view)}
+            >
+              <span className="relative">
+                <Icon name={n.view === 'HOME' && activeView === 'HOME' ? 'home_out' : n.icon} size={21} />
+                {!!n.badge && n.badge > 0 && <span className="tabbar-badge num">{n.badge > 99 ? '99+' : n.badge}</span>}
+              </span>
+              {n.label}
+            </button>
+          ))}
+        </div>
+      </nav>
     </main>
+  );
+
+  /* ---------------- prop bundles (kept out of JSX for readability) ---------------- */
+  function invCardProps(item: Item) {
+    return {
+      editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName,
+      updateExactQuantity,
+      onPlus: () => updateExactQuantity(item, (item.quantity || 0) + 1),
+      onMinus: () => updateExactQuantity(item, (item.quantity || 0) - 1),
+      onAddToShopping: addToShopping,
+      shoppingList: safeShoppingList,
+      onDelete: deleteInventoryItem,
+      editingCatItemId, editCatValue, setEditingCatItemId, setEditCatValue, saveEditedCategory,
+      categories: pickCategories,
+      onUpdateLocation: (loc: string) => updateInventoryField(item, 'location', loc),
+      highlight: !!searchTerm && (item.item_name || '').includes(searchTerm),
+      normKey,
+    };
+  }
+
+  function shopCardProps(s: any) {
+    return {
+      editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName,
+      editingCatItemId, editCatValue, setEditingCatItemId, setEditCatValue, saveEditedCategory,
+      categories: pickCategories,
+      onDelete: deleteShoppingItem,
+      onMoveToInventory: moveShoppingToInventory,
+      highlight: !!searchTerm && (s.item_name || '').includes(searchTerm),
+    };
+  }
+}
+
+/* ==================================================================== *
+ * components
+ * ==================================================================== */
+
+function EmptyState({ icon, title, body, actionLabel, onAction }: {
+  icon: string; title: string; body: string; actionLabel?: string; onAction?: () => void;
+}) {
+  return (
+    <div className="card empty">
+      <span className="empty-icon"><Icon name={icon} size={26} /></span>
+      <h3 className="t-title">{title}</h3>
+      <p className="t-body t-dim" style={{ maxWidth: 320 }}>{body}</p>
+      {actionLabel && onAction && <button onClick={onAction} className="btn btn-secondary btn-sm mt-1">{actionLabel}</button>}
+    </div>
   );
 }
 
-function ClassificationCard({ item, categories, onResolve, onIgnore }: any) {
+function ClassificationCard({ name, categories, onResolve, onIgnore }: {
+  name: string; categories: string[]; onResolve: (cat: string) => void; onIgnore: () => void;
+}) {
   const [customCat, setCustomCat] = useState('');
-  const quickOptions = Array.from(new Set([...categories, 'טרי', 'קפואים', 'שימורים', 'יבשים'])).filter(c => c !== 'uncertain' && c !== 'null' && c !== 'כללי').slice(0, 5);
-
+  const quick = Array.from(new Set([...categories, 'טרי', 'קפואים', 'שימורים', 'יבשים'])).slice(0, 6);
   return (
-    <div className="bg-white p-5 rounded-3xl shadow-sm border border-amber-100">
-      <div className="flex justify-between items-center mb-3">
-        <p className="font-black text-lg text-slate-800">איפה נשמור: <span className="text-amber-600">{item.item_name || item.name}</span>?</p>
-        <button onClick={onIgnore} className="text-slate-400 hover:text-slate-600 text-xs font-bold bg-slate-100 px-3 py-1 rounded-full">לשמור בכללי</button>
+    <div className="card">
+      <div className="flex items-start gap-2 mb-3">
+        <p className="t-body flex-1">איפה לשמור את <b>{name}</b>?</p>
+        <button onClick={onIgnore} className="btn btn-ghost btn-xs">כללי</button>
       </div>
-      <div className="flex flex-wrap gap-2 mb-4">
-        {quickOptions.map(opt => (
-          <button key={opt} onClick={() => onResolve(item, opt)} className="bg-amber-50 hover:bg-amber-400 hover:text-amber-900 text-amber-700 px-4 py-2 rounded-xl font-bold text-sm transition-all shadow-sm border border-amber-100">
-            {opt as string}
-          </button>
-        ))}
+      <div className="flex flex-wrap gap-2 mb-3">
+        {quick.map(opt => <button key={opt} onClick={() => onResolve(opt)} className="chip chip-btn">{opt}</button>)}
       </div>
-      <div className="flex gap-2 bg-[var(--c-soft)] p-2 rounded-2xl border border-[var(--c-line)] focus-within:border-amber-300 focus-within:ring-2 focus-within:ring-amber-100 transition-all">
-        <input 
-          value={customCat} 
-          onChange={e => setCustomCat(e.target.value)} 
-          placeholder="או הקלד קטגוריה חדשה..." 
-          className="flex-1 bg-transparent px-2 outline-none font-bold text-sm text-slate-700" 
-          onKeyDown={(e) => e.key === 'Enter' && customCat && onResolve(item, customCat)}
+      <div className="flex gap-2">
+        <input
+          className="field flex-1"
+          value={customCat}
+          onChange={e => setCustomCat(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && customCat.trim()) onResolve(customCat.trim()); }}
+          placeholder="או קטגוריה חדשה"
+          aria-label="קטגוריה חדשה"
         />
-        <button 
-          type="button"
-          onClick={(e) => { e.preventDefault(); if(customCat) onResolve(item, customCat); }} 
-          className={`px-4 py-2 rounded-xl font-black text-sm transition-all ${customCat ? 'bg-amber-400 text-amber-900 shadow-md' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
-        >
-          שמור
-        </button>
+        <button onClick={() => customCat.trim() && onResolve(customCat.trim())} disabled={!customCat.trim()} className="btn btn-primary btn-sm">שמור</button>
       </div>
     </div>
   );
 }
 
 function CompletedTaskCard({ task, onRestore, onDelete }: any) {
-  const today = new Date().toISOString().split('T')[0];
-  const [newDate, setNewDate] = useState(today);
+  const [newDate, setNewDate] = useState(localToday());
+  const [open, setOpen] = useState(false);
   return (
-    <div className="bg-slate-100 p-5 rounded-[2rem] border border-[var(--c-line)]">
-      <div className="flex justify-between items-start mb-3">
-        <h3 className="font-black text-base line-through text-slate-500 flex-1">{task.title}</h3>
-        <button onClick={() => onDelete(task.id!)} className="px-3 py-1.5 rounded-xl bg-white text-slate-500 text-[11px] font-black border border-[var(--c-line)] hover:bg-red-50 hover:text-red-700 transition-colors pointer-events-auto shadow-sm">מחק 🗑️</button>
+    <div className="card card-tight" style={{ background: 'var(--s-sunken)' }}>
+      <div className="flex items-center gap-2">
+        <h3 className="flex-1 t-body" style={{ textDecoration: 'line-through', color: 'var(--t-secondary)' }}>{task.title}</h3>
+        <button onClick={() => setOpen(v => !v)} className="btn btn-ghost btn-xs" aria-expanded={open}>שחזר</button>
+        <button onClick={() => onDelete(task)} className="btn-icon btn-icon-danger" aria-label={`מחק את ${task.title}`}>
+          <Icon name="trash" size={17} />
+        </button>
       </div>
-      <div className="mt-4 pt-4 border-t border-[var(--c-line)] flex flex-col gap-2">
-        <label className="text-[10px] font-black text-slate-400">תאריך יעד חדש לשחזור:</label>
-        <div className="flex gap-2">
-          <input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} className="flex-1 p-2 rounded-xl text-xs font-black bg-white border border-[var(--c-line)] pointer-events-auto" />
-          <button onClick={() => onRestore(task.id!, newDate)} className="bg-slate-200 text-slate-700 px-4 py-2 rounded-xl text-[10px] font-black shadow-sm hover:bg-slate-300 transition-colors pointer-events-auto">שחזר ↺</button>
+      {open && (
+        <div className="mt-3 pt-3 border-t border-[var(--border-subtle)] flex gap-2 items-end">
+          <div className="flex-1">
+            <label className="field-label">תאריך יעד חדש</label>
+            <input type="date" className="field field-center" value={newDate} onChange={e => setNewDate(e.target.value)} />
+          </div>
+          <button onClick={() => { onRestore(task.id, newDate); setOpen(false); }} className="btn btn-primary btn-sm">שחזר</button>
         </div>
-      </div>
+      )}
     </div>
   );
 }
 
-function InventoryCard({ item, editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName, updateExactQuantity, onPlus, onMinus, onAddToShopping, shoppingList, onDelete, editingCatItemId, editCatValue, setEditingCatItemId, setEditCatValue, saveEditedCategory, categories, onUpdateLocation, highlight }: any) {
-  const isLow = (item.quantity || 0) <= 2;
-  const alreadyInShopping = shoppingList?.some((s: any) => (s.item_name || '').includes(item.item_name));
-  const otherLocation = (item.location || 'מזווה') === 'מקרר' ? 'מזווה' : 'מקרר';
-  const locEmoji = (item.location || 'מזווה') === 'מקרר' ? '❄️' : '🏠';
+function Stepper({ value, low, onMinus, onPlus, onSet }: {
+  value: number; low: boolean; onMinus: () => void; onPlus: () => void; onSet: (v: number) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(String(value));
+  const [flash, setFlash] = useState(0);
+  const prev = useRef(value);
+
+  useEffect(() => {
+    if (prev.current !== value) { prev.current = value; setFlash(f => f + 1); }
+  }, [value]);
+
   return (
-    <div className={`flex flex-col gap-2 bg-white p-4 rounded-[1.5rem] shadow-sm border transition-shadow hover:shadow-md ${highlight ? 'border-amber-400 ring-2 ring-amber-200 bg-amber-50/30' : isLow ? 'border-rose-200 bg-rose-50/30' : 'border-[var(--c-line)]'}`}>
-      <div className="flex justify-between items-center gap-2">
-        <div className="text-right flex-1 min-w-0">
+    <div className={`stepper ${low ? 'stepper-low' : ''}`} dir="ltr">
+      <button className="stepper-btn" onClick={onMinus} aria-label="הפחת אחד"><Icon name="minus" size={17} /></button>
+      {editing ? (
+        <input
+          autoFocus
+          type="number"
+          className="stepper-val"
+          style={{ width: 56, background: 'transparent', border: 'none', outline: 'none' }}
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={() => { const n = parseInt(draft, 10); setEditing(false); if (!Number.isNaN(n)) onSet(n); }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { const n = parseInt(draft, 10); setEditing(false); if (!Number.isNaN(n)) onSet(n); }
+            if (e.key === 'Escape') setEditing(false);
+          }}
+          aria-label="כמות"
+        />
+      ) : (
+        <button
+          key={flash}
+          className="stepper-val val-flash"
+          onClick={() => { setDraft(String(value)); setEditing(true); }}
+          aria-label={`כמות ${value}, לחיצה להזנה ידנית`}
+        >
+          {value}
+        </button>
+      )}
+      <button className="stepper-btn" onClick={onPlus} aria-label="הוסף אחד"><Icon name="plus" size={17} /></button>
+    </div>
+  );
+}
+
+function InventoryCard({
+  item, editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName,
+  updateExactQuantity, onPlus, onMinus, onAddToShopping, shoppingList, onDelete,
+  editingCatItemId, editCatValue, setEditingCatItemId, setEditCatValue, saveEditedCategory,
+  categories, onUpdateLocation, highlight, normKey,
+}: any) {
+  const isLow = (item.quantity || 0) <= 2;
+  const already = shoppingList?.some((s: any) => normKey(s.item_name || '') === normKey(item.item_name || ''));
+  const isFridge = (item.location || 'מזווה') === 'מקרר';
+  const other = isFridge ? 'מזווה' : 'מקרר';
+  const cat = item.category || 'כללי';
+
+  return (
+    <div
+      className="card card-tight spine"
+      style={{
+        ['--spine-c' as any]: spineFor(cat),
+        borderColor: highlight ? 'var(--c-primary)' : undefined,
+        boxShadow: highlight ? 'var(--sh-focus)' : undefined,
+      }}
+    >
+      <div className="flex items-center gap-3">
+        <div className="flex-1 min-w-0">
           {editingId === item.id ? (
-            <div className="flex items-center gap-2 mb-1">
-              <input autoFocus value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedName(item.id, 'inventory_items')} className="border-b-2 border-[var(--c-primary)] bg-teal-50 px-2 py-1 outline-none font-bold text-lg w-[120px] pointer-events-auto" />
-              <button onClick={() => saveEditedName(item.id, 'inventory_items')} className="bg-green-100 text-green-700 p-2 rounded-lg pointer-events-auto shadow-sm">✅</button>
+            <div className="flex items-center gap-2">
+              <input
+                autoFocus
+                className="field flex-1"
+                value={editNameValue}
+                onChange={e => setEditNameValue(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') saveEditedName(item.id, 'inventory_items'); if (e.key === 'Escape') setEditingId(null); }}
+                aria-label="שם הפריט"
+              />
+              <button className="btn-icon" onClick={() => saveEditedName(item.id, 'inventory_items')} aria-label="שמור"><Icon name="check" size={18} /></button>
             </div>
           ) : (
-            <span onClick={() => {setEditingId(item.id); setEditNameValue(item.item_name || 'פריט לא ידוע');}} className="block font-bold text-lg text-slate-800 cursor-pointer hover:text-[var(--c-primary)] hover:underline decoration-dashed decoration-slate-300 pointer-events-auto transition-colors">{item.item_name || 'פריט לא ידוע'}</span>
+            <button
+              className="block text-right t-body tap-text truncate w-full"
+              style={{ fontSize: 16, fontWeight: 600 }}
+              onClick={() => { setEditingId(item.id); setEditNameValue(item.item_name || ''); }}
+            >
+              {item.item_name || 'פריט'}
+            </button>
           )}
-          {item.updated_at && (
-            <span className="text-[10px] font-bold text-slate-400 block mt-0.5">{new Date(item.updated_at).toLocaleDateString('he-IL')}</span>
-          )}
-          {isLow && !alreadyInShopping && (
-            <button onClick={() => onAddToShopping(item)} className="block mt-1 text-[10px] font-black text-[var(--c-primary)] bg-rose-100 px-3 py-1 rounded-lg hover:bg-rose-200 pointer-events-auto transition-colors">+ הוסף לקניות</button>
-          )}
-        </div>
-        <div className="flex items-center gap-2" dir="ltr">
-          <button onClick={onMinus} className="w-9 h-9 rounded-full bg-rose-100 text-[var(--c-primary)] font-black pointer-events-auto shadow-sm hover:bg-rose-200 transition-colors active:scale-90">-</button>
-          <div className="relative flex items-center justify-center min-w-[36px]">
-            <select value={Math.floor(item.quantity || 0)} onChange={(e) => updateExactQuantity(item, Number(e.target.value))} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer pointer-events-auto">
-              {[...Array(21).keys()].map(num => <option key={num} value={num}>{num}</option>)}
-            </select>
-            <span className={`text-xl font-black pointer-events-none ${isLow ? 'text-[var(--c-primary)]' : 'text-slate-700'}`}>{item.quantity || 0}</span>
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            {editingCatItemId === item.id ? (
+              <div className="flex items-center gap-1 flex-wrap">
+                {categories?.map((c: string) => (
+                  <button key={c} onClick={() => saveEditedCategory(item.id, 'inventory_items', c)} className="chip chip-btn">{c}</button>
+                ))}
+                <input
+                  autoFocus
+                  className="field"
+                  style={{ width: 130, minHeight: 34 }}
+                  value={editCatValue}
+                  onChange={e => setEditCatValue(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') saveEditedCategory(item.id, 'inventory_items'); if (e.key === 'Escape') setEditingCatItemId(null); }}
+                  placeholder="חדשה"
+                  aria-label="קטגוריה חדשה"
+                />
+                <button className="btn-icon" style={{ width: 32, height: 32 }} onClick={() => setEditingCatItemId(null)} aria-label="ביטול"><Icon name="x" size={16} /></button>
+              </div>
+            ) : (
+              <>
+                <button className="chip chip-btn chip-editable" onClick={() => { setEditingCatItemId(item.id); setEditCatValue(cat); }}>{cat}</button>
+                <button className="chip chip-btn chip-editable" onClick={() => onUpdateLocation(other)} aria-label={`העבר ל${other}`}>
+                  {isFridge && <Icon name="snow" size={13} />}{item.location || 'מזווה'}
+                </button>
+                {item.updated_at && <span className="t-micro t-faint num">{new Date(item.updated_at).toLocaleDateString('he-IL')}</span>}
+              </>
+            )}
           </div>
-          <button onClick={onPlus} className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-600 font-black pointer-events-auto shadow-sm hover:bg-emerald-200 transition-colors active:scale-90">+</button>
-          <button onClick={() => onDelete(item)} className="w-9 h-9 rounded-full bg-slate-100 text-slate-400 hover:bg-red-100 hover:text-red-600 font-black text-xs pointer-events-auto shadow-sm transition-colors active:scale-90" title="מחק לצמיתות">🗑️</button>
         </div>
+
+        <Stepper
+          value={item.quantity || 0}
+          low={isLow}
+          onMinus={onMinus}
+          onPlus={onPlus}
+          onSet={(v: number) => updateExactQuantity(item, v)}
+        />
+
+        <button className="btn-icon btn-icon-danger flex-none" onClick={() => onDelete(item)} aria-label={`מחק את ${item.item_name}`}>
+          <Icon name="trash" size={17} />
+        </button>
       </div>
 
-      <div className="flex items-center gap-2 flex-wrap text-[10px] font-black">
-        {editingCatItemId === item.id ? (
-          <div className="flex items-center gap-1 flex-wrap flex-1">
-            {categories?.filter((c: string) => c !== 'uncertain' && c !== 'null').map((cat: string) => (
-              <button key={cat} type="button" onClick={() => saveEditedCategory(item.id, 'inventory_items', cat)} className="bg-teal-50 text-[var(--c-head)] px-2 py-0.5 rounded-lg text-[10px] font-bold hover:bg-[var(--c-primary)] hover:text-white transition-all pointer-events-auto">{cat}</button>
-            ))}
-            <input value={editCatValue} onChange={(e) => setEditCatValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedCategory(item.id, 'inventory_items')} placeholder="קטגוריה חדשה..." className="border-b border-teal-300 bg-transparent px-1 outline-none text-[10px] font-bold w-[90px] pointer-events-auto" autoFocus />
-            <button type="button" onClick={() => saveEditedCategory(item.id, 'inventory_items')} className="text-[10px] font-black text-green-600 pointer-events-auto">✅</button>
-            <button type="button" onClick={() => setEditingCatItemId(null)} className="text-[10px] font-black text-slate-400 pointer-events-auto">✕</button>
-          </div>
-        ) : (
-          <button type="button" onClick={() => { setEditingCatItemId(item.id); setEditCatValue(item.category || 'כללי'); }} className="bg-[var(--c-soft)] text-slate-500 hover:text-[var(--c-primary)] hover:bg-teal-50 px-2 py-1 rounded-full pointer-events-auto transition-colors underline decoration-dashed decoration-slate-300">📁 {item.category || 'כללי'}</button>
-        )}
-        <button type="button" onClick={() => onUpdateLocation(otherLocation)} className="bg-[var(--c-soft)] text-slate-500 hover:text-[var(--c-primary)] hover:bg-teal-50 px-2 py-1 rounded-full pointer-events-auto transition-colors" title={`עבור ל${otherLocation}`}>{locEmoji} {item.location || 'מזווה'}</button>
-      </div>
+      {isLow && !already && (
+        <button onClick={() => onAddToShopping(item)} className="btn btn-ghost btn-xs mt-2">
+          <Icon name="cart" size={15} /> הוסף לקניות
+        </button>
+      )}
     </div>
   );
 }
 
-function ShoppingCard({ item, editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName, editingCatItemId, editCatValue, setEditingCatItemId, setEditCatValue, saveEditedCategory, categories, onDelete, onMoveToInventory, highlight }: any) {
-  const [showQtyDialog, setShowQtyDialog] = useState(false);
+function ShoppingCard({
+  item, editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName,
+  editingCatItemId, editCatValue, setEditingCatItemId, setEditCatValue, saveEditedCategory,
+  categories, onDelete, onMoveToInventory, highlight,
+}: any) {
+  const [showQty, setShowQty] = useState(false);
   const [qty, setQty] = useState(1);
-  // Swipe right to delete — replaces the delete button.
-  const SWIPE_THRESHOLD = 110;
+
+  // Swipe to delete. dragX lives in a ref as well as state, so the release
+  // handler reads the real distance and a fast flick is not lost.
+  const THRESHOLD = 96;
   const [dragX, setDragX] = useState(0);
+  const dragRef = useRef(0);
   const [dragging, setDragging] = useState(false);
   const startX = useRef(0);
   const startY = useRef(0);
-  const axisLocked = useRef<'none' | 'x' | 'y'>('none');
+  const axis = useRef<'none' | 'x' | 'y'>('none');
+
+  const setDrag = (v: number) => { dragRef.current = v; setDragX(v); };
 
   const onTouchStart = (e: React.TouchEvent) => {
     const t = e.touches[0];
-    startX.current = t.clientX;
-    startY.current = t.clientY;
-    axisLocked.current = 'none';
+    startX.current = t.clientX; startY.current = t.clientY;
+    axis.current = 'none';
     setDragging(true);
   };
   const onTouchMove = (e: React.TouchEvent) => {
@@ -2381,80 +2615,129 @@ function ShoppingCard({ item, editingId, editNameValue, setEditingId, setEditNam
     const t = e.touches[0];
     const dx = t.clientX - startX.current;
     const dy = t.clientY - startY.current;
-    if (axisLocked.current === 'none') {
+    if (axis.current === 'none') {
       if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-      axisLocked.current = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      axis.current = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
     }
-    // Vertical intent belongs to the page scroll, not to us.
-    if (axisLocked.current === 'y') return;
-    setDragX(Math.max(0, dx));
+    if (axis.current === 'y') return;
+    setDrag(Math.max(0, Math.min(dx, 300)));
   };
   const onTouchEnd = () => {
     setDragging(false);
-    axisLocked.current = 'none';
-    if (dragX >= SWIPE_THRESHOLD) {
-      setDragX(420);                 // slide it off, then remove
-      window.setTimeout(() => onDelete(item, true), 160);
+    axis.current = 'none';
+    if (dragRef.current >= THRESHOLD) {
+      setDrag(420);
+      window.setTimeout(() => onDelete(item, true), 170);
       return;
     }
-    setDragX(0);
+    setDrag(0);
   };
 
-  const armed = dragX >= SWIPE_THRESHOLD;
+  const armed = dragX >= THRESHOLD;
+  const cat = item.category || 'כללי';
+
   return (
-    <div className="relative overflow-hidden rounded-[1.5rem]">
-      {/* revealed behind the card while swiping */}
+    <div className="relative" style={{ borderRadius: 'var(--r-lg)', overflow: 'hidden' }}>
+      {/* the strip uncovered as the card slides right — dir=ltr so the label
+          sits at the physical left edge, which is the side being revealed */}
       <div
-        className={`absolute inset-0 flex items-center px-6 rounded-[1.5rem] transition-colors ${armed ? 'bg-red-500' : 'bg-red-300'}`}
-        style={{ opacity: dragX > 0 ? 1 : 0 }}
+        dir="ltr"
+        className="absolute inset-0 flex items-center px-5"
+        style={{
+          background: armed ? 'var(--st-danger)' : 'var(--st-danger-bg)',
+          color: armed ? '#fff' : 'var(--st-danger)',
+          opacity: dragX > 0 ? 1 : 0,
+          transition: 'background-color var(--dur) var(--ease-out)',
+        }}
         aria-hidden="true"
       >
-        <span className="text-white font-black text-sm">🗑️ {armed ? 'שחרר למחיקה' : 'החלק למחיקה'}</span>
+        <span className="flex items-center gap-2 t-label">
+          <Icon name="trash" size={17} />
+          {armed ? 'שחרר למחיקה' : 'החלק למחיקה'}
+        </span>
       </div>
 
       <div
+        className="card card-tight spine swipe-row"
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
         onTouchCancel={onTouchEnd}
-        style={{ transform: `translateX(${dragX}px)`, transition: dragging ? 'none' : 'transform 200ms ease-out' }}
-        className={`relative flex flex-col gap-3 bg-white p-4 rounded-[1.5rem] shadow-sm border ${highlight ? 'border-amber-400 ring-2 ring-amber-200 bg-amber-50/30' : 'border-rose-50 hover:border-rose-100'}`}
+        style={{
+          ['--spine-c' as any]: spineFor(cat),
+          transform: `translateX(${dragX}px)`,
+          transition: dragging ? 'none' : 'transform var(--dur-slow) var(--ease-out)',
+          borderColor: highlight ? 'var(--c-primary)' : undefined,
+          boxShadow: highlight ? 'var(--sh-focus)' : undefined,
+        }}
       >
-      <div className="flex items-center gap-2 flex-wrap">
-        <button onClick={() => setShowQtyDialog(!showQtyDialog)} className="bg-teal-100 text-[var(--c-head)] hover:bg-teal-200 px-3 py-1.5 rounded-xl text-xs font-black shadow-sm pointer-events-auto transition-colors">📦 הוסף למלאי</button>
-        <div className="flex flex-col gap-0.5 flex-1 text-right">
-          {editingId === item.id ? (
-            <div className="flex items-center gap-2">
-              <input autoFocus value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedName(item.id, 'shopping_list')} className="border-b-2 border-[var(--c-primary)] bg-rose-50 px-2 py-1 outline-none font-bold text-lg w-[140px] pointer-events-auto" />
-              <button onClick={() => saveEditedName(item.id, 'shopping_list')} className="bg-green-100 text-green-700 p-2 rounded-lg pointer-events-auto shadow-sm">✅</button>
+        <div className="flex items-center gap-3">
+          <div className="flex-1 min-w-0">
+            {editingId === item.id ? (
+              <div className="flex items-center gap-2">
+                <input
+                  autoFocus
+                  className="field flex-1"
+                  value={editNameValue}
+                  onChange={e => setEditNameValue(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') saveEditedName(item.id, 'shopping_list'); if (e.key === 'Escape') setEditingId(null); }}
+                  aria-label="שם הפריט"
+                />
+                <button className="btn-icon" onClick={() => saveEditedName(item.id, 'shopping_list')} aria-label="שמור"><Icon name="check" size={18} /></button>
+              </div>
+            ) : (
+              <button
+                className="block text-right t-body tap-text truncate w-full"
+                style={{ fontSize: 16, fontWeight: 600 }}
+                onClick={() => { setEditingId(item.id); setEditNameValue(item.item_name || ''); }}
+              >
+                {item.item_name || 'פריט'}
+              </button>
+            )}
+            <div className="mt-1 flex items-center gap-2 flex-wrap">
+              {editingCatItemId === item.id ? (
+                <div className="flex items-center gap-1 flex-wrap">
+                  {categories?.map((c: string) => (
+                    <button key={c} onClick={() => saveEditedCategory(item.id, 'shopping_list', c)} className="chip chip-btn">{c}</button>
+                  ))}
+                  <input
+                    autoFocus
+                    className="field"
+                    style={{ width: 130, minHeight: 34 }}
+                    value={editCatValue}
+                    onChange={e => setEditCatValue(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') saveEditedCategory(item.id, 'shopping_list'); if (e.key === 'Escape') setEditingCatItemId(null); }}
+                    placeholder="חדשה"
+                    aria-label="קטגוריה חדשה"
+                  />
+                  <button className="btn-icon" style={{ width: 32, height: 32 }} onClick={() => setEditingCatItemId(null)} aria-label="ביטול"><Icon name="x" size={16} /></button>
+                </div>
+              ) : (
+                <button className="chip chip-btn chip-editable" onClick={() => { setEditingCatItemId(item.id); setEditCatValue(cat); }}>{cat}</button>
+              )}
             </div>
-          ) : (
-            <span onClick={() => {setEditingId(item.id); setEditNameValue(item.item_name || 'פריט לא ידוע');}} className="font-bold text-slate-800 text-lg cursor-pointer hover:text-[var(--c-primary)] hover:underline decoration-dashed decoration-slate-300 pointer-events-auto transition-colors">{item.item_name || 'פריט לא ידוע'}</span>
-          )}
-          {editingCatItemId === item.id ? (
-            <div className="flex items-center gap-1 flex-wrap">
-              {categories?.filter((c: string) => c !== 'uncertain' && c !== 'null').map((cat: string) => (
-                <button key={cat} onClick={async () => { await saveEditedCategory(item.id, 'shopping_list', cat); }}
-                  className="bg-rose-50 text-[var(--c-primary)] px-2 py-0.5 rounded-lg text-[10px] font-bold hover:bg-[var(--c-primary-soft)] hover:text-white transition-all pointer-events-auto">{cat}</button>
-              ))}
-              <input value={editCatValue} onChange={(e) => setEditCatValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveEditedCategory(item.id, 'shopping_list')} placeholder="קטגוריה..." className="border-b border-rose-300 bg-transparent px-1 outline-none text-[10px] font-bold w-[80px] pointer-events-auto" autoFocus />
-              <button onClick={() => saveEditedCategory(item.id, 'shopping_list')} className="text-[10px] font-black text-green-600 pointer-events-auto">✅</button>
-              <button onClick={() => setEditingCatItemId(null)} className="text-[10px] font-black text-slate-400 pointer-events-auto">✕</button>
+          </div>
+
+          <button className="btn btn-ghost btn-xs flex-none" onClick={() => setShowQty(v => !v)} aria-expanded={showQty}>
+            <Icon name="box" size={15} /> למלאי
+          </button>
+          {/* keyboard/desktop delete — the swipe is a shortcut, not the only way */}
+          <button className="btn-icon btn-icon-danger flex-none" onClick={() => onDelete(item)} aria-label={`מחק את ${item.item_name}`}>
+            <Icon name="trash" size={17} />
+          </button>
+        </div>
+
+        {showQty && (
+          <div className="mt-3 pt-3 border-t border-[var(--border-subtle)] flex items-center gap-3">
+            <span className="t-label flex-1">כמה להעביר למלאי?</span>
+            <div className="stepper" dir="ltr">
+              <button className="stepper-btn" onClick={() => setQty(q => Math.max(1, q - 1))} aria-label="פחות"><Icon name="minus" size={16} /></button>
+              <span className="stepper-val">{qty}</span>
+              <button className="stepper-btn" onClick={() => setQty(q => q + 1)} aria-label="עוד"><Icon name="plus" size={16} /></button>
             </div>
-          ) : (
-            <button type="button" onClick={() => { setEditingCatItemId(item.id); setEditCatValue(item.category || 'כללי'); }} className="text-[11px] font-bold text-slate-400 cursor-pointer hover:text-rose-500 pointer-events-auto transition-colors text-right bg-transparent border-none p-0 underline decoration-dashed decoration-slate-300">{item.category || 'כללי'}</button>
-          )}
-        </div>
-      </div>
-      {showQtyDialog && (
-        <div className="flex items-center gap-2 bg-teal-50 p-3 rounded-xl border border-teal-200">
-          <span className="text-xs font-bold text-teal-900 flex-1">כמות להוספה למלאי:</span>
-          <button onClick={() => setQty(Math.max(1, qty - 1))} className="w-8 h-8 rounded-full bg-white text-[var(--c-primary)] font-black pointer-events-auto shadow-sm">-</button>
-          <span className="text-lg font-black text-teal-800 min-w-[28px] text-center">{qty}</span>
-          <button onClick={() => setQty(qty + 1)} className="w-8 h-8 rounded-full bg-white text-[var(--c-primary)] font-black pointer-events-auto shadow-sm">+</button>
-          <button onClick={() => { onMoveToInventory(item, qty); setShowQtyDialog(false); setQty(1); }} className="bg-[var(--c-primary)] text-white px-3 py-1.5 rounded-xl text-xs font-black pointer-events-auto">אישור ✓</button>
-        </div>
-      )}
+            <button onClick={() => { onMoveToInventory(item, qty); setShowQty(false); setQty(1); }} className="btn btn-primary btn-xs">אישור</button>
+          </div>
+        )}
       </div>
     </div>
   );
