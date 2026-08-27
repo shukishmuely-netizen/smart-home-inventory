@@ -66,6 +66,9 @@ const SUPERMARKET_ITEMS: string[] = [
   'נייר טואלט', 'מגבות נייר', 'סבון כלים', 'אבקת כביסה', 'מרכך כביסה', 'מטהר', 'אקונומיקה', 'ספריי ניקוי',
   'שקיות זבל', 'נייר אפייה', 'ניילון נצמד', 'שמפו', 'מרכך שיער', 'סבון גוף', 'משחת שיניים', 'מברשת שיניים',
   'דאודורנט', 'קרם גוף', 'תחבושות', 'טמפונים', 'גילוח',
+  'דלי מגבונים', 'מגבונים לחים', 'מגבוני חיטוי', 'נוזל כלים', 'מרכך כלים', 'ספוג כלים',
+  'כפפות חד פעמיות', 'צלחות חד פעמי', 'כוסות חד פעמי', 'סכום חד פעמי', 'מפיות נייר',
+  'שקיות אשפה', 'קפסולות כביסה', 'טאבלטים למדיח', 'מלח למדיח', 'מבריק למדיח',
 ];
 
 export default function HomePage() {
@@ -119,6 +122,7 @@ export default function HomePage() {
   const [shoppingTemplates, setShoppingTemplates] = useState<ShoppingTemplate[]>([]);
   const [templatesError, setTemplatesError] = useState<string | null>(null);
   const [showTemplatesPanel, setShowTemplatesPanel] = useState(false);
+  const [historyNames, setHistoryNames] = useState<string[]>([]);
   const [addedSummary, setAddedSummary] = useState<{ name: string; category: string }[]>([]);
   const [showCreateTemplate, setShowCreateTemplate] = useState(false);
   const [newTemplateName, setNewTemplateName] = useState('');
@@ -142,7 +146,7 @@ export default function HomePage() {
   };
 
   const fetchData = async () => {
-    const [invRes, shopRes, catsRes, tskRes, equipRes, tplRes, tplItemsRes] = await Promise.all([
+    const [invRes, shopRes, catsRes, tskRes, equipRes, tplRes, tplItemsRes, histRes] = await Promise.all([
       supabase.from('inventory_items').select('*'),
       supabase.from('shopping_list').select('*'),
       supabase.from('category_order').select('category_name').order('sort_order'),
@@ -150,6 +154,7 @@ export default function HomePage() {
       supabase.from('equipment_items').select('*'),
       supabase.from('shopping_templates').select('*').order('created_at'),
       supabase.from('shopping_template_items').select('*').order('sort_order'),
+      supabase.from('shopping_history').select('item_name'),
     ]);
 
     if (invRes.data) {
@@ -166,6 +171,10 @@ export default function HomePage() {
     if (catsRes.data) setCategories(catsRes.data.map(c => c.category_name));
     if (tskRes.data) setTasks(tskRes.data);
     if (equipRes.data) setEquipmentItems(equipRes.data);
+    if (histRes.data) {
+      setHistoryNames((histRes.data as any[]).map(h => h.item_name).filter(Boolean));
+    }
+
     // Surface a failed templates read instead of silently rendering an empty
     // list — a missing grant or stale API schema cache looks identical to
     // "no lists yet" otherwise.
@@ -197,6 +206,13 @@ export default function HomePage() {
       if (f && FONT_OPTIONS.some(o => o.key === f)) setAppFont(f);
     } catch { /* private mode etc. */ }
   }, []);
+
+  // The "added to shopping" recap clears itself after 10s.
+  useEffect(() => {
+    if (addedSummary.length === 0) return;
+    const t = window.setTimeout(() => setAddedSummary([]), 10000);
+    return () => window.clearTimeout(t);
+  }, [addedSummary]);
 
   const applyTheme = (t: string) => {
     setAppTheme(t);
@@ -243,9 +259,24 @@ export default function HomePage() {
     await supabase.from('inventory_items').delete().eq('id', item.id);
   };
 
-  const deleteShoppingItem = async (shopItem: any) => {
-    if (!confirm(`למחוק לצמיתות את "${shopItem.item_name}"?`)) return;
+  // Keep every name that ever passed through the shopping list, so it stays
+  // available to autocomplete after the item is gone.
+  const rememberItemName = async (rawName: string) => {
+    const name = stripName(rawName || '');
+    if (!name) return;
+    setHistoryNames(prev => prev.some(n => n.toLowerCase() === name.toLowerCase()) ? prev : [...prev, name]);
+    await supabase
+      .from('shopping_history')
+      .upsert(
+        { item_name: name, household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72', last_used: new Date().toISOString() },
+        { onConflict: 'item_name', ignoreDuplicates: false }
+      );
+  };
+
+  const deleteShoppingItem = async (shopItem: any, skipConfirm = false) => {
+    if (!skipConfirm && !confirm(`למחוק לצמיתות את "${shopItem.item_name}"?`)) return;
     setShoppingList(prev => prev.filter(i => i.id !== shopItem.id));
+    rememberItemName(shopItem.item_name);
     await supabase.from('shopping_list').delete().eq('id', shopItem.id);
   };
 
@@ -260,6 +291,7 @@ export default function HomePage() {
         location: 'מזווה', household_id: '92e1a987-99b7-41ec-93fb-ae2ada2bcf72'
       }]);
     }
+    rememberItemName(shopItem.item_name);
     await supabase.from('shopping_list').delete().eq('id', shopItem.id);
     fetchData();
     showStatus(`✅ ${shopItem.item_name} הועבר למלאי`, true);
@@ -462,9 +494,6 @@ export default function HomePage() {
     if (wordChoiceTasks.length <= 1) showStatus('✅ נוסף לקניות', true);
   };
 
-  // Known multi-word product names that stay together when the user types without commas.
-  const KNOWN_COMPOUND_ITEMS = ['תפוח אדמה', 'תפוחי אדמה'];
-
   const splitShoppingInput = (text: string): string[] => {
     const trimmed = (text || '').trim();
     if (!trimmed) return [];
@@ -472,18 +501,19 @@ export default function HomePage() {
     if (/[,،]/.test(trimmed)) {
       return trimmed.split(/[,،]/).map(s => s.trim()).filter(Boolean);
     }
-    // No commas → every word is its own item, except known compound product names.
+    // No commas → every word is its own item, except recognised multi-word
+    // products (catalog, past purchases, current lists) which stay whole.
     const tokens = trimmed.split(/\s+/);
     const items: string[] = [];
     let i = 0;
     while (i < tokens.length) {
       let matched = false;
-      for (const compound of KNOWN_COMPOUND_ITEMS) {
+      for (const compound of compoundNames) {
         const compTokens = compound.split(/\s+/);
         if (i + compTokens.length <= tokens.length) {
           const slice = tokens.slice(i, i + compTokens.length).join(' ');
-          if (slice === compound) {
-            items.push(compound);
+          if (slice.toLowerCase() === compound.toLowerCase()) {
+            items.push(slice);
             i += compTokens.length;
             matched = true;
             break;
@@ -1103,9 +1133,16 @@ export default function HomePage() {
     safeShoppingList.forEach(s => push(s.item_name || ''));
     safeInventory.forEach(i => push(i.item_name || ''));
     shoppingTemplates.forEach(t => t.items.forEach(it => push(it.item_name || '')));
+    historyNames.forEach(push);   // anything that was ever on the list and left
     SUPERMARKET_ITEMS.forEach(push);
     return out;
   })();
+
+  // Multi-word entries from the pool double as the dictionary that keeps
+  // "דלי מגבונים" from being split into two items on a space-separated add.
+  const compoundNames: string[] = suggestionPool
+    .filter(n => n.trim().includes(' '))
+    .sort((a, b) => b.length - a.length);
 
   const activeTasks = tasks.filter(t => t.status !== 'סיימתי');
   const completedTasks = tasks.filter(t => t.status === 'סיימתי');
@@ -2324,10 +2361,66 @@ function InventoryCard({ item, editingId, editNameValue, setEditingId, setEditNa
 function ShoppingCard({ item, editingId, editNameValue, setEditingId, setEditNameValue, saveEditedName, editingCatItemId, editCatValue, setEditingCatItemId, setEditCatValue, saveEditedCategory, categories, onDelete, onMoveToInventory, highlight }: any) {
   const [showQtyDialog, setShowQtyDialog] = useState(false);
   const [qty, setQty] = useState(1);
+  // Swipe right to delete — replaces the delete button.
+  const SWIPE_THRESHOLD = 110;
+  const [dragX, setDragX] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const startX = useRef(0);
+  const startY = useRef(0);
+  const axisLocked = useRef<'none' | 'x' | 'y'>('none');
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    startX.current = t.clientX;
+    startY.current = t.clientY;
+    axisLocked.current = 'none';
+    setDragging(true);
+  };
+  const onTouchMove = (e: React.TouchEvent) => {
+    if (!dragging) return;
+    const t = e.touches[0];
+    const dx = t.clientX - startX.current;
+    const dy = t.clientY - startY.current;
+    if (axisLocked.current === 'none') {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      axisLocked.current = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+    }
+    // Vertical intent belongs to the page scroll, not to us.
+    if (axisLocked.current === 'y') return;
+    setDragX(Math.max(0, dx));
+  };
+  const onTouchEnd = () => {
+    setDragging(false);
+    axisLocked.current = 'none';
+    if (dragX >= SWIPE_THRESHOLD) {
+      setDragX(420);                 // slide it off, then remove
+      window.setTimeout(() => onDelete(item, true), 160);
+      return;
+    }
+    setDragX(0);
+  };
+
+  const armed = dragX >= SWIPE_THRESHOLD;
   return (
-    <div className={`flex flex-col gap-3 bg-white p-4 rounded-[1.5rem] shadow-sm border transition-colors ${highlight ? 'border-amber-400 ring-2 ring-amber-200 bg-amber-50/30' : 'border-rose-50 hover:border-rose-100'}`}>
+    <div className="relative overflow-hidden rounded-[1.5rem]">
+      {/* revealed behind the card while swiping */}
+      <div
+        className={`absolute inset-0 flex items-center px-6 rounded-[1.5rem] transition-colors ${armed ? 'bg-red-500' : 'bg-red-300'}`}
+        style={{ opacity: dragX > 0 ? 1 : 0 }}
+        aria-hidden="true"
+      >
+        <span className="text-white font-black text-sm">🗑️ {armed ? 'שחרר למחיקה' : 'החלק למחיקה'}</span>
+      </div>
+
+      <div
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onTouchCancel={onTouchEnd}
+        style={{ transform: `translateX(${dragX}px)`, transition: dragging ? 'none' : 'transform 200ms ease-out' }}
+        className={`relative flex flex-col gap-3 bg-white p-4 rounded-[1.5rem] shadow-sm border ${highlight ? 'border-amber-400 ring-2 ring-amber-200 bg-amber-50/30' : 'border-rose-50 hover:border-rose-100'}`}
+      >
       <div className="flex items-center gap-2 flex-wrap">
-        <button onClick={() => onDelete(item)} className="bg-slate-100 text-slate-500 hover:bg-red-100 hover:text-red-600 px-3 py-1.5 rounded-xl text-xs font-black shadow-sm pointer-events-auto transition-colors">🗑️ מחק</button>
         <button onClick={() => setShowQtyDialog(!showQtyDialog)} className="bg-teal-100 text-[var(--c-head)] hover:bg-teal-200 px-3 py-1.5 rounded-xl text-xs font-black shadow-sm pointer-events-auto transition-colors">📦 הוסף למלאי</button>
         <div className="flex flex-col gap-0.5 flex-1 text-right">
           {editingId === item.id ? (
@@ -2362,6 +2455,7 @@ function ShoppingCard({ item, editingId, editNameValue, setEditingId, setEditNam
           <button onClick={() => { onMoveToInventory(item, qty); setShowQtyDialog(false); setQty(1); }} className="bg-[var(--c-primary)] text-white px-3 py-1.5 rounded-xl text-xs font-black pointer-events-auto">אישור ✓</button>
         </div>
       )}
+      </div>
     </div>
   );
 }
