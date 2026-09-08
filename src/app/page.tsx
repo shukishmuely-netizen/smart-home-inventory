@@ -151,7 +151,10 @@ export default function HomePage() {
   const [historyNames, setHistoryNames] = useState<string[]>([]);
 
   const [invInput, setInvInput] = useState('');
-  const [equipInput, setEquipInput] = useState('');
+  const emptyEquipAddRow = () => ({ name: '', category: '', newCategory: '' });
+  const [equipQuickAddRows, setEquipQuickAddRows] = useState([emptyEquipAddRow(), emptyEquipAddRow()]);
+  const [equipQuickAddSubmitting, setEquipQuickAddSubmitting] = useState(false);
+  const [equipCatGuessingRow, setEquipCatGuessingRow] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [note, setNote] = useState<Note>(null);
 
@@ -347,7 +350,6 @@ export default function HomePage() {
     setAddedSummary([]);
     setNote(null);
     setInvInput('');
-    setEquipInput('');
     setShowCategorize(false);
     window.scrollTo({ top: 0 });
   };
@@ -462,11 +464,11 @@ export default function HomePage() {
     showNote('ok', `הקטגוריה "${cat}" נמחקה`);
   };
 
-  const guessCategories = async (names: string[]): Promise<Record<string, string>> => {
+  const guessCategories = async (names: string[], catList: string[] = categories, context?: string): Promise<Record<string, string>> => {
     const guesses: Record<string, string> = {};
     const clean = names.map(n => (n || '').trim()).filter(Boolean);
     if (!clean.length) return guesses;
-    const data = await parseJson({ text: clean.join(', '), categories });
+    const data = await parseJson({ text: clean.join(', '), categories: catList, ...(context ? { context } : {}) });
     for (const it of ((data && data.items) || []) as any[]) {
       const itemName = (it.name || it.item_name || '').trim();
       const raw = (it.category || '').toString();
@@ -1096,49 +1098,64 @@ export default function HomePage() {
     failed(sessErr, 'שמירת תאריך האריזה');
   };
 
-  const handleEquipmentUpdate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!equipInput.trim()) return;
-    showNote('info', 'מעבד…', false);
-    const equipCats = Array.from(new Set([...EQUIP_CATEGORIES, ...currentEquipItems.map(i => i.category)]));
-    const data = await parseJson({ text: equipInput, categories: equipCats, context: 'equipment' });
-    if (!data) return;
-    const items = data.items || [];
-    if (!items.length) { showNote('warn', 'לא זוהו פריטים'); return; }
+  // Auto-grows exactly like the shopping quick-add: typing into the last row
+  // opens a fresh empty one below it.
+  const updateEquipQuickAddRow = (idx: number, patch: Partial<{ name: string; category: string; newCategory: string }>) => {
+    setEquipQuickAddRows(prev => {
+      const next = prev.map((r, i) => (i === idx ? { ...r, ...patch } : r));
+      if (idx === prev.length - 1 && next[idx].name.trim() && next.length < 20) next.push(emptyEquipAddRow());
+      return next;
+    });
+  };
 
-    const notFound: string[] = [];
-    let addedCount = 0;
-    let removedCount = 0;
-
-    for (const item of items) {
-      const name = item.name || item.item_name || 'פריט';
-      const isRemoval = (item.quantity || 0) < 0 || item.removeAll;
-      if (isRemoval) {
-        const clean = name.replace(/^(את כל ה|כל ה|את ה|ה)/g, '').trim().toLowerCase();
-        const matches = currentEquipItems.filter(i => (i.item_name || '').toLowerCase().includes(clean));
-        for (const m of matches) {
-          setEquipmentItems(prev => prev.filter(i => i.id !== m.id));
-          const { error } = await supabase.from('equipment_items').delete().eq('id', m.id);
-          if (error) { failed(error, `הסרת "${m.item_name}"`); await fetchData(); } else removedCount++;
-        }
-        if (!matches.length) notFound.push(name);
-      } else {
-        const allowed = [...equipCats, ...(data.new_categories || [])];
-        const finalCat = item.category && allowed.includes(item.category) ? item.category : 'ציוד נוסף';
-        const { data: inserted, error } = await supabase.from('equipment_items')
-          .insert([{ item_name: name, category: finalCat, list_type: equipListType, is_packed: false, household_id: HOUSEHOLD }])
-          .select();
-        if (error) failed(error, `הוספת "${name}"`);
-        else { if (inserted) setEquipmentItems(prev => [...prev, ...(inserted as EquipmentItem[])]); addedCount++; }
-      }
+  const autoFillEquipRowCategory = async (idx: number, rawName: string) => {
+    const name = (rawName || '').trim();
+    if (!name) return;
+    if (equipQuickAddRows[idx]?.category) return;
+    setEquipCatGuessingRow(idx);
+    try {
+      const guesses = await guessCategories([name], equipCategories, 'equipment');
+      const guess = guesses[normKey(name)];
+      if (!guess) return;
+      setEquipQuickAddRows(prev => prev.map((r, i) =>
+        (i === idx && !r.category && r.name.trim() === name) ? { ...r, category: guess } : r));
+    } finally {
+      setEquipCatGuessingRow(null);
     }
+  };
 
-    const parts: string[] = [];
-    if (addedCount) parts.push(`נוספו ${addedCount}`);
-    if (removedCount) parts.push(`הוסרו ${removedCount}`);
-    if (notFound.length) parts.push(`לא נמצאו: ${notFound.join(', ')}`);
-    showNote(notFound.length ? 'warn' : 'ok', parts.join(' · ') || 'עודכן');
-    setEquipInput('');
+  const handleEquipQuickAddSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (equipQuickAddSubmitting) return;
+    const rows = equipQuickAddRows.filter(r => r.name.trim());
+    if (!rows.length) return;
+    setEquipQuickAddSubmitting(true);
+    showNote('info', 'מעבד…', false);
+
+    const picked = (r: { category: string; newCategory: string }) =>
+      (r.category === '__other__' ? r.newCategory.trim() : (r.category === '' ? '' : r.category));
+    const needGuess = rows.filter(r => !picked(r)).map(r => r.name.trim());
+    const guesses = needGuess.length ? await guessCategories(needGuess, equipCategories, 'equipment') : {};
+
+    let added = 0;
+    const newRows: EquipmentItem[] = [];
+    for (const row of rows) {
+      const name = row.name.trim();
+      const cat = picked(row) || guesses[normKey(name)] || 'ציוד נוסף';
+      const { data: inserted, error } = await supabase.from('equipment_items')
+        .insert([{ item_name: name, category: cat, list_type: equipListType, is_packed: false, household_id: HOUSEHOLD }])
+        .select();
+      // A failure already surfaces its own message via failed() — nothing
+      // generic to layer on top of that.
+      if (error) { failed(error, `הוספת "${name}"`); continue; }
+      if (inserted) newRows.push(...(inserted as EquipmentItem[]));
+      added++;
+    }
+    if (newRows.length) setEquipmentItems(prev => [...prev, ...newRows]);
+    if (added > 0) setNote(null);
+
+    setEquipQuickAddRows([emptyEquipAddRow(), emptyEquipAddRow()]);
+    setEquipQuickAddSubmitting(false);
   };
 
   const deleteEquipmentItem = async (item: EquipmentItem) => {
@@ -2186,12 +2203,50 @@ export default function HomePage() {
               ))}
             </div>
 
-            <form onSubmit={handleEquipmentUpdate} className="card mb-4 grid gap-3">
-              <label className="field-label" htmlFor="eq-text">הוסף או הורד ציוד</label>
-              <textarea id="eq-text" className="field" value={equipInput} onChange={e => setEquipInput(e.target.value)} placeholder="למשל: מטען, אוזניות, תרופות שינה" />
+            <form onSubmit={handleEquipQuickAddSubmit} className="card mb-4 grid gap-3">
+              {equipQuickAddRows.map((row, i) => (
+                <div key={`eqa-${i}`} className="grid gap-2">
+                  <div className="flex gap-2">
+                    <label className="sr-only" htmlFor={`eqa-name-${i}`}>{i === 0 ? 'פריט לרשימה' : `פריט נוסף ${i + 1}`}</label>
+                    <input
+                      id={`eqa-name-${i}`}
+                      className="field flex-1"
+                      type="text"
+                      value={row.name}
+                      autoComplete="off"
+                      onChange={e => updateEquipQuickAddRow(i, { name: e.target.value })}
+                      onBlur={() => autoFillEquipRowCategory(i, row.name)}
+                      placeholder={i === 0 ? 'פריט לרשימה' : 'פריט נוסף'}
+                    />
+                    <label className="sr-only" htmlFor={`eqa-cat-${i}`}>קטגוריה</label>
+                    <select
+                      id={`eqa-cat-${i}`}
+                      className="field"
+                      style={{ width: 130, flex: 'none' }}
+                      value={row.category}
+                      onChange={e => updateEquipQuickAddRow(i, { category: e.target.value, newCategory: e.target.value === '__other__' ? row.newCategory : '' })}
+                    >
+                      <option value="">{equipCatGuessingRow === i ? 'מסווג…' : 'סיווג אוטומטי'}</option>
+                      <option value="ציוד נוסף">ציוד נוסף</option>
+                      {equipCategories.filter(c => c !== 'ציוד נוסף').map(c => <option key={c} value={c}>{c}</option>)}
+                      <option value="__other__">+ אחר…</option>
+                    </select>
+                  </div>
+                  {row.category === '__other__' && (
+                    <input
+                      className="field"
+                      type="text"
+                      value={row.newCategory}
+                      onChange={e => updateEquipQuickAddRow(i, { newCategory: e.target.value })}
+                      placeholder="שם קטגוריה חדשה"
+                      aria-label="שם קטגוריה חדשה"
+                    />
+                  )}
+                </div>
+              ))}
               <div className="flex gap-2">
-                <button type="submit" className="btn btn-primary flex-1" disabled={!equipInput.trim()}>
-                  <Icon name="plus" size={18} /> עדכן רשימה
+                <button type="submit" className="btn btn-primary flex-1" disabled={equipQuickAddSubmitting || equipQuickAddRows.every(r => !r.name.trim())}>
+                  <Icon name="plus" size={18} /> הוסף לרשימה
                 </button>
                 <button type="button" onClick={() => resetPacking(equipListType)} disabled={packedEquip.length === 0} className="btn btn-secondary">
                   <Icon name="refresh" size={18} /> חדש
@@ -2205,7 +2260,7 @@ export default function HomePage() {
               <EmptyState
                 icon="check"
                 title={packedEquip.length ? 'הכל ארוז' : 'הרשימה ריקה'}
-                body={packedEquip.length ? 'כל הפריטים מסומנים. "חדש" מאפס את הסימונים לאריזה הבאה.' : 'הוסף ציוד בטקסט חופשי למעלה.'}
+                body={packedEquip.length ? 'כל הפריטים מסומנים. "חדש" מאפס את הסימונים לאריזה הבאה.' : 'הוסף פריטים לרשימה למעלה.'}
               />
             ) : (
               <div className="grid gap-6">
