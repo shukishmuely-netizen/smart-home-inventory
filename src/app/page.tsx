@@ -404,6 +404,9 @@ export default function HomePage() {
 
   const DEFAULT_EQUIP_LISTS = ['חו"ל', 'סופ"ש', 'פסטיבלים וקמפינג'];
   const HIDDEN_EQUIP_LISTS = ['חד"כ'];
+  // חו"ל stays exactly as marked, trip after trip — no day-based reset.
+  // Only the explicit "חדש" button below clears its checkmarks.
+  const NO_AUTO_RESET_LISTS = ['חו"ל'];
   const equipListTypes = Array.from(new Set([
     ...DEFAULT_EQUIP_LISTS,
     ...equipmentItems.map(i => i.list_type).filter(Boolean),
@@ -1072,6 +1075,7 @@ export default function HomePage() {
 
   useEffect(() => {
     if (activeView !== 'TEMPLATES') return;
+    if (NO_AUTO_RESET_LISTS.includes(equipListType)) return;
     let cancelled = false;
     (async () => {
       const { data } = await supabase.from('equipment_sessions').select('*').eq('list_type', equipListType).maybeSingle();
