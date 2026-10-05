@@ -130,7 +130,7 @@ export default function HomePage() {
   const today = localToday();
 
   /* ---------------- state ---------------- */
-  const [activeView, setActiveView] = useState<View>('HOME');
+  const [activeView, setActiveView] = useState<View>('SHOPPING');   // the app opens straight on the shopping list
   const [appTheme, setAppTheme] = useState('pastel');
   const [appFont, setAppFont] = useState('heebo');
   const [loading, setLoading] = useState(true);
