@@ -213,6 +213,12 @@ export default function HomePage() {
   const [editingCatItemId, setEditingCatItemId] = useState<string | null>(null);
   const [editCatValue, setEditCatValue] = useState('');
 
+  // In-app confirmation. The browser confirm() is invisible to automation and
+  // returns false silently, which made deletes look like they did nothing.
+  const [confirmAsk, setConfirmAsk] = useState<{ text: string; resolve: (v: boolean) => void } | null>(null);
+  const askConfirm = (text: string) => new Promise<boolean>(resolve => setConfirmAsk({ text, resolve }));
+  const answerConfirm = (v: boolean) => { confirmAsk?.resolve(v); setConfirmAsk(null); };
+
   const noteTimer = useRef<number | null>(null);
   const focusRefs = useRef<Record<string, HTMLElement | null>>({});
   const fetchSeq = useRef(0);
@@ -450,7 +456,7 @@ export default function HomePage() {
   };
 
   const deleteCategory = async (cat: string) => {
-    if (!confirm(`למחוק את הקטגוריה "${cat}"? הפריטים שבה יעברו ל"כללי" ולא יימחקו.`)) return;
+    if (!(await askConfirm(`למחוק את הקטגוריה "${cat}"? הפריטים שבה יעברו ל"כללי" ולא יימחקו.`))) return;
     const results = await Promise.all([
       supabase.from('shopping_list').update({ category: 'כללי' }).eq('category', cat),
       supabase.from('inventory_items').update({ category: 'כללי' }).eq('category', cat),
@@ -501,7 +507,7 @@ export default function HomePage() {
   };
 
   const deleteInventoryItem = async (item: Item) => {
-    if (!confirm(`למחוק לצמיתות את "${item.item_name}"?`)) return;
+    if (!(await askConfirm(`למחוק לצמיתות את "${item.item_name}"?`))) return;
     setInventory(prev => prev.filter(i => i.id !== item.id));
     await rememberItemName(item.item_name);
     const { error } = await supabase.from('inventory_items').delete().eq('id', item.id);
@@ -534,11 +540,12 @@ export default function HomePage() {
   };
 
   const deleteShoppingItem = async (shopItem: any, skipConfirm = false) => {
-    if (!skipConfirm && !confirm(`למחוק את "${shopItem.item_name}" מהרשימה?`)) return;
+    if (!skipConfirm && !(await askConfirm(`למחוק את "${shopItem.item_name}" מהרשימה?`))) return;
     setShoppingList(prev => prev.filter(i => i.id !== shopItem.id));
     await rememberItemName(shopItem.item_name);
     const { error } = await supabase.from('shopping_list').delete().eq('id', shopItem.id);
     if (failed(error, 'המחיקה')) await fetchData();
+    else showNote('ok', `${stripName(shopItem.item_name)} נמחק`);
   };
 
   const moveShoppingToInventory = async (shopItem: any, qty: number) => {
@@ -1059,7 +1066,7 @@ export default function HomePage() {
   };
 
   const deleteTask = async (task: Task) => {
-    if (!confirm(`למחוק לצמיתות את המשימה "${task.title}"?`)) return;
+    if (!(await askConfirm(`למחוק לצמיתות את המשימה "${task.title}"?`))) return;
     setTasks(prev => prev.filter(t => t.id !== task.id));
     const { error } = await supabase.from('tasks').delete().eq('id', task.id);
     if (failed(error, 'מחיקת המשימה')) await fetchData();
@@ -1159,7 +1166,7 @@ export default function HomePage() {
   };
 
   const deleteEquipmentItem = async (item: EquipmentItem) => {
-    if (!confirm(`למחוק לצמיתות את "${item.item_name}"?`)) return;
+    if (!(await askConfirm(`למחוק לצמיתות את "${item.item_name}"?`))) return;
     setEquipmentItems(prev => prev.filter(i => i.id !== item.id));
     const { error } = await supabase.from('equipment_items').delete().eq('id', item.id);
     if (failed(error, 'המחיקה')) await fetchData();
@@ -1220,7 +1227,7 @@ export default function HomePage() {
   };
 
   const deleteTemplate = async (template: ShoppingTemplate) => {
-    if (!confirm(`למחוק את הרשימה "${template.name}" לצמיתות?`)) return;
+    if (!(await askConfirm(`למחוק את הרשימה "${template.name}" לצמיתות?`))) return;
     const { error } = await supabase.from('shopping_templates').delete().eq('id', template.id);
     if (failed(error, 'מחיקת הרשימה')) return;
     showNote('ok', `הרשימה "${template.name}" נמחקה`);
@@ -1391,6 +1398,17 @@ export default function HomePage() {
       <div key={activeView} className="max-w-2xl mx-auto px-5 relative z-10">
 
         {/* status note */}
+        {confirmAsk && (
+          <div className="fixed inset-0 z-[3000] grid place-items-center p-5" style={{ background: 'rgb(0 0 0 / .35)' }} role="alertdialog" aria-modal="true" aria-label="אישור מחיקה">
+            <div className="card w-full max-w-sm grid gap-4">
+              <p className="t-body">{confirmAsk.text}</p>
+              <div className="flex gap-2">
+                <button autoFocus className="btn btn-primary flex-1" data-testid="confirm-yes" onClick={() => answerConfirm(true)}>מחק</button>
+                <button className="btn btn-secondary flex-1" data-testid="confirm-no" onClick={() => answerConfirm(false)}>ביטול</button>
+              </div>
+            </div>
+          </div>
+        )}
         {note && (
           <div className={`${noteClass} mb-4 slide-up`} role="status" aria-live="polite">
             <Icon name={note.kind === 'danger' ? 'alert' : note.kind === 'warn' ? 'alert' : note.kind === 'info' ? 'clock' : 'check'} size={18} />
