@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
+import type { Session } from '@supabase/supabase-js';
 
 const HOUSEHOLD = '92e1a987-99b7-41ec-93fb-ae2ada2bcf72';
 
@@ -126,7 +127,7 @@ const fmtDate = (iso: string) => {
   return d && m && y ? `${d}/${m}/${y}` : iso;
 };
 
-export default function HomePage() {
+function HomeApp({ onSignOut }: { onSignOut: () => void }) {
   const today = localToday();
 
   /* ---------------- state ---------------- */
@@ -2429,6 +2430,12 @@ export default function HomePage() {
               <h2 className="t-title mb-1">גרסה</h2>
               <p className="t-body t-dim">הבית של ניאו · גרסה 2.0</p>
             </section>
+
+            <section className="card">
+              <h2 className="t-title mb-1">חשבון</h2>
+              <p className="t-body t-dim mb-3">ההתנתקות מוחקת את ההתחברות מהמכשיר הזה בלבד.</p>
+              <button className="btn btn-secondary" onClick={onSignOut}>התנתק</button>
+            </section>
           </div>
         )}
       </div>
@@ -2854,4 +2861,60 @@ function ShoppingCard({
       </div>
     </div>
   );
+}
+
+
+/* ====================================================================== *
+ * auth gate: nothing that reads or writes data mounts without a session
+ * ====================================================================== */
+function LoginScreen() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true); setErr(null);
+    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+    if (error) setErr('האימייל או הסיסמה לא נכונים');
+    setBusy(false);
+  };
+
+  return (
+    <main dir="rtl" className="min-h-screen grid place-items-center p-5">
+      <form onSubmit={submit} className="card w-full max-w-sm grid gap-4" aria-label="התחברות">
+        <h1 className="t-display">הבית של ניאו</h1>
+        <p className="t-body t-dim">התחברות למשפחה בלבד</p>
+        <label className="grid gap-1.5">
+          <span className="t-label">אימייל</span>
+          <input className="field" type="email" dir="ltr" autoComplete="username" required value={email} onChange={e => setEmail(e.target.value)} />
+        </label>
+        <label className="grid gap-1.5">
+          <span className="t-label">סיסמה</span>
+          <input className="field" type="password" dir="ltr" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} />
+        </label>
+        {err && <div className="note note-danger" role="alert"><span className="flex-1">{err}</span></div>}
+        <button className="btn btn-primary" type="submit" disabled={busy}>{busy ? 'מתחבר…' : 'התחבר'}</button>
+      </form>
+    </main>
+  );
+}
+
+export default function HomePage() {
+  // undefined = still reading the stored session, null = signed out
+  const [session, setSession] = useState<Session | null | undefined>(undefined);
+
+  useEffect(() => {
+    let alive = true;
+    supabase.auth.getSession().then(({ data }) => { if (alive) setSession(data.session ?? null); });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => { if (alive) setSession(s ?? null); });
+    return () => { alive = false; sub.subscription.unsubscribe(); };
+  }, []);
+
+  if (session === undefined) return <main className="min-h-screen" aria-busy="true" />;
+  if (!session) return <LoginScreen />;
+  // keyed by user: a different login never inherits the previous user's screen state
+  return <HomeApp key={session.user.id} onSignOut={() => { supabase.auth.signOut(); }} />;
 }
