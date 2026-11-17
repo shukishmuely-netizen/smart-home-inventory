@@ -2867,11 +2867,54 @@ function ShoppingCard({
 /* ====================================================================== *
  * auth gate: nothing that reads or writes data mounts without a session
  * ====================================================================== */
+// A password-reset link opens the app with "type=recovery" in the URL hash. Captured at load,
+// before the Supabase client clears the hash, so the new-password screen is never skipped.
+const RECOVERY_IN_URL = typeof window !== 'undefined' && /type=recovery/.test(window.location.hash);
+
+function NewPasswordScreen({ onDone }: { onDone: () => void }) {
+  const [pw, setPw] = useState('');
+  const [pw2, setPw2] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    if (pw.length < 8) { setErr('הסיסמה צריכה להיות לפחות 8 תווים'); return; }
+    if (pw !== pw2) { setErr('שתי הסיסמאות לא זהות'); return; }
+    setBusy(true); setErr(null);
+    const { error } = await supabase.auth.updateUser({ password: pw });
+    setBusy(false);
+    if (error) { setErr('לא הצלחנו לשמור את הסיסמה. נסו לבקש קישור חדש.'); return; }
+    onDone();
+  };
+
+  return (
+    <main dir="rtl" className="min-h-screen grid place-items-center p-5">
+      <form onSubmit={submit} className="card w-full max-w-sm grid gap-4" aria-label="סיסמה חדשה">
+        <h1 className="t-display">סיסמה חדשה</h1>
+        <label className="grid gap-1.5">
+          <span className="t-label">סיסמה חדשה</span>
+          <input className="field" type="password" dir="ltr" autoComplete="new-password" required value={pw} onChange={e => setPw(e.target.value)} />
+        </label>
+        <label className="grid gap-1.5">
+          <span className="t-label">סיסמה שוב</span>
+          <input className="field" type="password" dir="ltr" autoComplete="new-password" required value={pw2} onChange={e => setPw2(e.target.value)} />
+        </label>
+        {err && <div className="note note-danger" role="alert"><span className="flex-1">{err}</span></div>}
+        <button className="btn btn-primary" type="submit" disabled={busy}>{busy ? 'שומר…' : 'שמור וכנס'}</button>
+      </form>
+    </main>
+  );
+}
+
 function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [mode, setMode] = useState<'login' | 'reset'>('login');
+  const [sent, setSent] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2881,6 +2924,34 @@ function LoginScreen() {
     if (error) setErr('האימייל או הסיסמה לא נכונים');
     setBusy(false);
   };
+
+  // Same answer whether or not the address exists, so the screen never reveals who has an account.
+  const sendReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true); setErr(null);
+    await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: window.location.origin });
+    setBusy(false);
+    setSent(true);
+  };
+
+  if (mode === 'reset') {
+    return (
+      <main dir="rtl" className="min-h-screen grid place-items-center p-5">
+        <form onSubmit={sendReset} className="card w-full max-w-sm grid gap-4" aria-label="איפוס סיסמה">
+          <h1 className="t-display">איפוס סיסמה</h1>
+          <p className="t-body t-dim">נשלח קישור לאיפוס למייל, אם הוא רשום אצלנו.</p>
+          <label className="grid gap-1.5">
+            <span className="t-label">אימייל</span>
+            <input className="field" type="email" dir="ltr" autoComplete="username" required value={email} onChange={e => setEmail(e.target.value)} />
+          </label>
+          {sent && <div className="note" role="status"><span className="flex-1">אם האימייל רשום, נשלח אליו קישור. בדקו גם בספאם.</span></div>}
+          <button className="btn btn-primary" type="submit" disabled={busy}>{busy ? 'שולח…' : 'שלח קישור'}</button>
+          <button className="btn btn-secondary" type="button" onClick={() => { setMode('login'); setSent(false); }}>חזרה להתחברות</button>
+        </form>
+      </main>
+    );
+  }
 
   return (
     <main dir="rtl" className="min-h-screen grid place-items-center p-5">
@@ -2897,6 +2968,7 @@ function LoginScreen() {
         </label>
         {err && <div className="note note-danger" role="alert"><span className="flex-1">{err}</span></div>}
         <button className="btn btn-primary" type="submit" disabled={busy}>{busy ? 'מתחבר…' : 'התחבר'}</button>
+        <button className="btn btn-secondary" type="button" onClick={() => { setMode('reset'); setErr(null); }}>שכחתי סיסמה</button>
       </form>
     </main>
   );
@@ -2905,16 +2977,24 @@ function LoginScreen() {
 export default function HomePage() {
   // undefined = still reading the stored session, null = signed out
   const [session, setSession] = useState<Session | null | undefined>(undefined);
+  const [recovery, setRecovery] = useState(RECOVERY_IN_URL);
 
   useEffect(() => {
     let alive = true;
     supabase.auth.getSession().then(({ data }) => { if (alive) setSession(data.session ?? null); });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => { if (alive) setSession(s ?? null); });
+    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
+      if (!alive) return;
+      if (event === 'PASSWORD_RECOVERY') setRecovery(true);
+      if (event === 'SIGNED_OUT') setRecovery(false);
+      setSession(s ?? null);
+    });
     return () => { alive = false; sub.subscription.unsubscribe(); };
   }, []);
 
   if (session === undefined) return <main className="min-h-screen" aria-busy="true" />;
   if (!session) return <LoginScreen />;
+  // opened from a reset link: the link signs the user in, so ask for the new password before showing any data
+  if (recovery) return <NewPasswordScreen onDone={() => setRecovery(false)} />;
   // keyed by user: a different login never inherits the previous user's screen state
   return <HomeApp key={session.user.id} onSignOut={() => { supabase.auth.signOut(); }} />;
 }
